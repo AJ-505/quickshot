@@ -31,21 +31,10 @@ TOOLBAR_SPACE = 74    # room for the floating toolbar below the image
 MAX_SCREEN_SHARE = 0.86   # never fill the whole monitor
 MIN_IMAGE_SCALE = 0.2
 MAX_IMAGE_SCALE = 1.0
+MIN_WINDOW_W = 640
+MIN_WINDOW_H = 360
 WIDTHS = [1.5, 2.5, 3.5, 5.0, 7.0, 10.0, 14.0]
 
-# How long to let GNOME's capture shutter finish before showing the editor.
-# Tunable so this can be dialled in without a code change.
-DEFAULT_SHUTTER_SETTLE_MS = 420
-
-
-def _editor_delay_ms() -> int:
-    raw = os.environ.get("QUICKSHOT_SHUTTER_SETTLE_MS")
-    if raw is None:
-        return DEFAULT_SHUTTER_SETTLE_MS
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        return DEFAULT_SHUTTER_SETTLE_MS
 SIZES = [12, 16, 20, 26, 32, 40, 52, 68]
 CURSORS = {
     SELECT: "default", RECT: "crosshair", ELLIPSE: "crosshair",
@@ -90,9 +79,6 @@ class Editor(Gtk.Window):
         self._drag: dict | None = None
         self._band = None
         self._last_xy: tuple[float, float] | None = None
-        self._want_pos: tuple[int, int] | None = None
-        self._show_source = 0
-        self._show_tries = 0
         self._space_down = False
         self._shift_down = False
         self._entry_pending: Shape | None = None
@@ -190,64 +176,14 @@ class Editor(Gtk.Window):
         self._band = None
         self.tool = POINTER
         self.toolbar.set_tool(POINTER)
-        self._size_and_place()
         self.view = View(scale=1.0, fit=1.0, ox=0.0, oy=0.0, zoom=1.0)
-        self._cancel_pending_show()
-        # Show only once a real frame exists. Mapping first and painting after is
-        # what produces an occasional white frame: the compositor puts the
-        # surface on screen before the first draw has landed.
-        try:
-            self.realize()
-        except Exception:
-            pass
-        self._show_tries = 0
-        # GNOME plays a short shutter animation when the selection is
-        # confirmed. Dropping a large window straight on top of it compounds
-        # into a flashbang, so let the shutter finish first. Native screenshots
-        # only ever put a small notification there, which is why they do not
-        # feel like this.
-        delay = _editor_delay_ms()
-        if delay > 0:
-            self._show_source = GLib.timeout_add(
-                delay, self._show_when_ready, priority=GLib.PRIORITY_HIGH)
-        else:
-            self._show_source = GLib.idle_add(
-                self._show_when_ready, priority=GLib.PRIORITY_HIGH)
-
-    def _cancel_pending_show(self) -> None:
-        """Drop a queued show so it cannot resurrect a closed editor."""
-        if self._show_source:
-            try:
-                GLib.source_remove(self._show_source)
-            except Exception:
-                pass
-            self._show_source = 0
-
-    def _show_when_ready(self) -> bool:
-        self._show_source = 0
-        # The editor may have been closed or replaced while this was queued.
-        if self._closing or self.img is None:
-            return GLib.SOURCE_REMOVE
-        w, h = self.get_width(), self.get_height()
-        self._show_tries += 1
-        if (w <= 1 or h <= 1) and self._show_tries < 240:
-            return GLib.SOURCE_CONTINUE   # allocation not settled; try again
+        w, h = self._size_for_capture()
+        self.set_default_size(w, h)
         self._prime_first_frame(w, h)
         self.present()
-        surface = self.get_surface()
-        if surface is not None:
-            try:
-                if getattr(self, "_want_pos", None):
-                    surface.move(*self._want_pos)
-            except Exception:
-                pass
         self.area.grab_focus()
-        return GLib.SOURCE_REMOVE
 
     def _prime_first_frame(self, w: int, h: int) -> None:
-        """Build the composited frame before the window is ever mapped."""
-        if w <= 1 or h <= 1 or not self.img:
-            return
         self._recompute_fit(w, h)
         cache = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
         self._paint_content(render.ctx(cache), w, h)
@@ -276,40 +212,18 @@ class Editor(Gtk.Window):
         except Exception:
             return None, None
 
-    def _size_and_place(self) -> None:
-        """Size the window to the screenshot and centre it on its monitor.
-
-        This is a window, not a fullscreen takeover. Sliding a bright capture
-        across the entire display is what reads as a flashbang; GNOME's own
-        screenshot never does that because it only ever shows a small
-        notification thumbnail. A windowed editor also leaves the desktop
-        visible, so the transition is a modest brightness change rather than a
-        white-out.
-        """
-        mon, geo = self._monitor_for_pointer()
-        iw = self.img.get_width() if self.img else 1
-        ih = self.img.get_height() if self.img else 1
-        if geo is None:
-            self.set_size_request(min(iw + 2 * PAD, 1400), min(ih + 2 * PAD, 900))
-            return
-
+    def _size_for_capture(self) -> tuple[int, int]:
+        _mon, geo = self._monitor_for_pointer()
+        iw, ih = self.img.get_width(), self.img.get_height()
         chrome_x, chrome_y = 2 * PAD, 2 * PAD + TOOLBAR_SPACE
-        # Never exceed this share of the monitor, so a big capture is scaled
-        # down rather than overflowing.
-        max_w = max(320, int(geo.width * MAX_SCREEN_SHARE))
-        max_h = max(240, int(geo.height * MAX_SCREEN_SHARE))
+        screen_w, screen_h = (geo.width, geo.height) if geo else (1600, 1000)
+        max_w = max(MIN_WINDOW_W, int(screen_w * MAX_SCREEN_SHARE))
+        max_h = max(MIN_WINDOW_H, int(screen_h * MAX_SCREEN_SHARE))
         scale = min((max_w - chrome_x) / iw, (max_h - chrome_y) / ih, MAX_IMAGE_SCALE)
-        scale = max(scale, MIN_IMAGE_SCALE)
-        self.view.fit = scale
-
-        w = int(iw * scale) + chrome_x
-        h = int(ih * scale) + chrome_y
-        w = min(w, max_w)
-        h = min(h, max_h)
-        self.set_size_request(w, h)
-        # GTK4 removed Gtk.Window.move(); position the surface once it exists.
-        self._want_pos = (geo.x + (geo.width - w) // 2,
-                          geo.y + max(0, (geo.height - h) // 2 - 24))
+        self.view.fit = max(scale, MIN_IMAGE_SCALE)
+        w = int(iw * self.view.fit) + chrome_x
+        h = int(ih * self.view.fit) + chrome_y
+        return min(max(w, MIN_WINDOW_W), max_w), min(max(h, MIN_WINDOW_H), max_h)
 
     # ----------------------------------------------------------------- view
     def _recompute_fit(self, w: int, h: int) -> None:
@@ -803,7 +717,6 @@ class Editor(Gtk.Window):
         Used when the window is flagged visible but holds no image, which
         otherwise makes every subsequent capture request a silent no-op.
         """
-        self._cancel_pending_show()
         self.entry_frame.set_visible(False)
         self.help_box.set_visible(False)
         self._preview = None
@@ -831,7 +744,6 @@ class Editor(Gtk.Window):
         if self._closing:
             return
         self._closing = True
-        self._cancel_pending_show()
         if self._path:
             self.discard_file(self._path)
         self._path = None
