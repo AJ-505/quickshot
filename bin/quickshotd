@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+"""Resident service entry point (launched by systemd, or by the hotkey)."""
+import os
+import sys
+
+
+def _find_src() -> str:
+    """Locate the package directory across the layouts we ship in.
+
+    Repo:      <root>/bin/quickshotd        -> <root>/src
+    Installed: ~/.local/bin/quickshotd      -> ~/.local/share/quickshot/src
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    parent = os.path.dirname(here)
+    candidates = [
+        os.environ.get("QUICKSHOT_SRC"),
+        os.path.join(here, "src"),                       # repo:      <root>/bin
+        os.path.join(parent, "src"),                      # repo:      <root>
+        os.path.join(parent, "share", "quickshot", "src"),  # ~/.local/bin
+    ]
+    for c in candidates:
+        if c and os.path.isdir(os.path.join(c, "quickshot")):
+            return c
+    sys.stderr.write(
+        "quickshot: cannot locate the quickshot package; tried:\n  "
+        + "\n  ".join(x for x in candidates if x) + "\n"
+    )
+    raise SystemExit(1)
+
+
+sys.path.insert(0, _find_src())
+
+from quickshot.service import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

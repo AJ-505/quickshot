@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""Fallback hotkey target: signals the resident service, starting it if needed.
+
+The fast path is `bin/quickshot`, a shell script using nc. This is the
+dependency-free version, used when nc is missing or the service is not up yet.
+"""
+import os
+import socket
+import sys
+
+
+def sock_path() -> str:
+    base = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    return os.path.join(base, f"quickshot-{os.getuid()}.sock")
+
+
+def main() -> int:
+    want_status = "--status" in sys.argv or "-s" in sys.argv
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(2.0 if want_status else 0.5)
+        s.connect(sock_path())
+        s.sendall(b"s" if want_status else b"1")
+        if want_status:
+            data = b""
+            while not data.endswith(b"\n"):
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            sys.stdout.write(data.decode(errors="replace"))
+        s.close()
+        return 0
+    except (OSError, socket.timeout) as exc:
+        if want_status:
+            sys.stdout.write(f"service not reachable: {exc}\n")
+            return 1
+        if os.environ.get("QUICKSHOT_NO_SPAWN"):
+            sys.stderr.write("quickshot: service not running\n")
+            return 1
+        return _spawn()
+
+
+def _spawn() -> int:
+    import subprocess
+    exe = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quickshotd")
+    try:
+        subprocess.Popen([exe], start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        sys.stderr.write(f"quickshot: {exc}\n")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,27 @@
+#!/bin/sh
+# Hotkey target. Wakes the resident service and exits.
+#
+# This runs on every capture, so it is a shell script rather than a Python one:
+# measured on this machine, `printf | nc -U` round-trips in ~13 ms against ~325 ms
+# for starting a Python interpreter. The Python implementation is still used
+# when the service is not running yet (it starts it) or nc is unavailable.
+set -u
+
+sock="${XDG_RUNTIME_DIR:-/tmp}/quickshot-$(id -u).sock"
+here=$(dirname "$0")
+
+# `quickshot --status` asks the running service what state it thinks it is in.
+for arg in "$@"; do
+  if [ "$arg" = "--status" ] || [ "$arg" = "-s" ]; then
+    exec python3 "$here/quickshot-py" --status
+  fi
+done
+
+if [ -S "$sock" ]; then
+    # -q0 closes as soon as stdin is drained; the second form covers netcat
+    # builds without -q (the service closes the connection anyway).
+    if printf 1 | nc -U -q0 "$sock" 2>/dev/null; then exit 0; fi
+    if printf 1 | nc -U "$sock" 2>/dev/null; then exit 0; fi
+fi
+
+exec python3 "$here/quickshot-py" "$@"
