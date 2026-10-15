@@ -18,7 +18,9 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gdk, Gtk  # noqa: E402
+gi.require_version("Graphene", "1.0")
+gi.require_version("Gsk", "4.0")
+from gi.repository import Gdk, Graphene, Gsk, Gtk  # noqa: E402
 
 from . import imageio, render
 from .model import (
@@ -92,6 +94,23 @@ def _monitor_scale(mon) -> float:
     return float(mon.get_scale_factor() or 1)
 
 
+BACKGROUND = Gdk.RGBA(red=0.051, green=0.051, blue=0.063, alpha=1.0)
+FRAME = Gdk.RGBA(red=1.0, green=1.0, blue=1.0, alpha=0.10)
+
+
+def _rect(x: float, y: float, w: float, h: float) -> Graphene.Rect:
+    return Graphene.Rect().init(x, y, w, h)
+
+
+class Canvas(Gtk.Widget):
+    def __init__(self, paint) -> None:
+        super().__init__()
+        self._paint = paint
+
+    def do_snapshot(self, snapshot: Gtk.Snapshot) -> None:
+        self._paint(snapshot, self.get_width(), self.get_height())
+
+
 class Editor(Gtk.Window):
     def __init__(self, app) -> None:
         super().__init__(application=app.gtk_app, title="Quickshot")
@@ -114,8 +133,9 @@ class Editor(Gtk.Window):
         self._space_down = False
         self._shift_down = False
         self._entry_pending: Shape | None = None
-        self._cache: cairo.ImageSurface | None = None
-        self._cache_key = None
+        self._texture: Gdk.Texture | None = None
+        self._ink: Gdk.Texture | None = None
+        self._ink_key = None
         self._closing = False
         self._last_pointer_motion = 0
 
@@ -137,11 +157,10 @@ class Editor(Gtk.Window):
             self.set_skip_taskbar(True)
 
         self.overlay = Gtk.Overlay()
-        self.area = Gtk.DrawingArea()
+        self.area = Canvas(self._snapshot)
         self.area.set_focusable(True)
         self.area.set_can_focus(True)
         self.area.add_css_class("quickshot-canvas")
-        self.area.set_draw_func(self._on_draw)
         self.overlay.set_child(self.area)
 
         self.toolbar = Toolbar(self)
@@ -200,11 +219,11 @@ class Editor(Gtk.Window):
         self._closing = False
         self.doc = Doc()
         self.img = imageio.load_png(path)
+        self._texture = imageio.to_texture(self.img)
+        self._forget_ink()
         self.selected = None
         self._preview = None
         self._drag = None
-        self._cache = None
-        self._cache_key = None
         self._band = None
         self.tool = POINTER
         self.toolbar.set_tool(POINTER)
@@ -212,17 +231,9 @@ class Editor(Gtk.Window):
         self.view = View(scale=1.0, fit=1.0, ox=0.0, oy=0.0, zoom=1.0)
         w, h = self._size_for_capture()
         self.set_default_size(w, h)
-        self._prime_first_frame(w, h)
+        self._recompute_fit(w, h)
         self.present()
         self.area.grab_focus()
-
-    def _prime_first_frame(self, w: int, h: int) -> None:
-        self._recompute_fit(w, h)
-        cache = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
-        self._paint_content(render.ctx(cache), w, h)
-        self._cache = cache
-        self._cache_key = (self.doc.rev, self.view.scale, self.view.ox,
-                           self.view.oy, w, h, self.img)
 
     def _monitor_for_pointer(self):
         display = Gdk.Display.get_default()
@@ -302,7 +313,6 @@ class Editor(Gtk.Window):
             self.view.ox = cx - bx * self.view.scale
             self.view.oy = cy - by * self.view.scale
             self._clamp_pan(w, h)
-        self._cache = None
         self.area.queue_draw()
 
     # ---------------------------------------------------------------- input
@@ -390,7 +400,6 @@ class Editor(Gtk.Window):
             self.view.ox = d["ox"] + (x - d["sx"])
             self.view.oy = d["oy"] + (y - d["sy"])
             self._clamp_pan(self.area.get_width(), self.area.get_height())
-            self._cache = None
             self.area.queue_draw()
             return True
         if mode == "move":
@@ -589,26 +598,99 @@ class Editor(Gtk.Window):
         self.area.grab_focus()
 
     # ----------------------------------------------------------------- draw
-    def _on_draw(self, _area, cr, width, height) -> None:
-        cr.set_source_rgb(0.051, 0.051, 0.063)
-        cr.paint()
-        if not self.img:
+    def _snapshot(self, snap: Gtk.Snapshot, width: int, height: int) -> None:
+        snap.append_color(BACKGROUND, _rect(0, 0, width, height))
+        if self._texture is None or width < 1 or height < 1:
             return
-        if self._cache_key != (self.doc.rev, self.view.scale, self.view.ox,
-                               self.view.oy, width, height, self.img):
-            self._recompute_fit(width, height)
-            self._cache = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
-            cc = render.ctx(self._cache)
-            self._paint_content(cc, width, height)
-            self._cache_key = (self.doc.rev, self.view.scale, self.view.ox,
-                               self.view.oy, width, height, self.img)
-        cr.set_source_surface(self._cache, 0, 0)
-        cr.paint()
+        self._recompute_fit(width, height)
+        v = self.view
+        image = _rect(v.ox, v.oy, self.img.get_width() * v.scale, self.img.get_height() * v.scale)
+        snap.append_scaled_texture(self._texture, self._image_filter(), image)
+        moving = self._drag["shape"] if self._drag and self._drag["mode"] == "move" else None
+        ink = self._ink_texture(width, height, moving)
+        if ink is not None:
+            snap.append_texture(ink, _rect(0, 0, width, height))
+        live = self._live_bounds(width, height, moving)
+        if live is not None:
+            self._paint_live(snap.append_cairo(live), moving)
+        frame = Gsk.RoundedRect().init_from_rect(
+            _rect(v.ox - 1, v.oy - 1, image.get_width() + 2, image.get_height() + 2), 0)
+        snap.append_border(frame, [1, 1, 1, 1], [FRAME] * 4)
 
-        # live layer
+    def _device_scale(self) -> float:
+        native = self.area.get_native()
+        surface = native.get_surface() if native else None
+        return surface.get_scale() if surface and hasattr(surface, "get_scale") else 1.0
+
+    def _image_filter(self) -> Gsk.ScalingFilter:
+        pixels = self.view.scale * self._device_scale()
+        if pixels > 1.01:
+            return Gsk.ScalingFilter.NEAREST
+        if pixels < 0.99:
+            return Gsk.ScalingFilter.TRILINEAR
+        return Gsk.ScalingFilter.LINEAR
+
+    def _forget_ink(self) -> None:
+        self._ink = None
+        self._ink_key = None
+
+    def _ink_texture(self, width: int, height: int, moving) -> Gdk.Texture | None:
+        shapes = [s for s in self.doc.shapes if s is not moving]
+        if not shapes:
+            return None
+        ds = self._device_scale()
+        v = self.view
+        key = (self.doc.rev, len(shapes), v.scale, v.ox, v.oy, width, height, ds, id(moving))
+        if key != self._ink_key:
+            surface = cairo.ImageSurface(cairo.FORMAT_ARGB32,
+                                         math.ceil(width * ds), math.ceil(height * ds))
+            surface.set_device_scale(ds, ds)
+            cr = render.ctx(surface)
+            v.apply(cr)
+            for s in shapes:
+                render.draw_shape(cr, self.img, s, v)
+            cr.restore()
+            surface.flush()
+            self._ink = imageio.to_texture(surface)
+            self._ink_key = key
+        return self._ink
+
+    def _live_shapes(self, moving) -> list:
+        live = [s for s in (self._preview, moving) if s is not None]
+        if self.selected is not None and self._drag is None:
+            live.append(self.selected)
+        return live
+
+    def _live_bounds(self, width: int, height: int, moving) -> Graphene.Rect | None:
+        if self._entry_pending is not None:
+            return _rect(0, 0, width, height)
+        boxes = []
+        for s in self._live_shapes(moving):
+            x0, y0, x1, y1 = s.bounds()
+            pad = 16 + 4 * s.width + 2 * s.size
+            lx0, ly0 = self.view.to_logical(x0, y0)
+            lx1, ly1 = self.view.to_logical(x1, y1)
+            boxes.append((lx0 - pad, ly0 - pad, lx1 + pad, ly1 + pad))
+        if self._band:
+            bx0, by0 = self.view.to_logical(self._band[0], self._band[1])
+            bx1, by1 = self.view.to_logical(self._band[2], self._band[3])
+            boxes.append((min(bx0, bx1) - 4, min(by0, by1) - 4, max(bx0, bx1) + 4, max(by0, by1) + 4))
+        if not boxes:
+            return None
+        x0 = max(0, math.floor(min(b[0] for b in boxes)))
+        y0 = max(0, math.floor(min(b[1] for b in boxes)))
+        x1 = min(width, math.ceil(max(b[2] for b in boxes)))
+        y1 = min(height, math.ceil(max(b[3] for b in boxes)))
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return _rect(x0, y0, x1 - x0, y1 - y0)
+
+    def _paint_live(self, cr: cairo.Context, moving) -> None:
         self.view.apply(cr)
         if self._preview is not None:
             render.draw_shape(cr, self.img, self._preview, self.view, guide=True)
+        if moving is not None:
+            render.draw_shape(cr, self.img, moving, self.view)
         if self.selected is not None and self._drag is None:
             render.draw_selection(cr, self.selected, self.view)
         if self._entry_pending is not None:
@@ -617,11 +699,9 @@ class Editor(Gtk.Window):
             render.draw_text_caret(cr, self._entry_pending, self.view,
                                    self.entry.get_position())
         cr.restore()
-
-        band = getattr(self, "_band", None)
-        if band:
-            x0, y0 = self.view.to_logical(band[0], band[1])
-            x1, y1 = self.view.to_logical(band[2], band[3])
+        if self._band:
+            x0, y0 = self.view.to_logical(self._band[0], self._band[1])
+            x1, y1 = self.view.to_logical(self._band[2], self._band[3])
             cr.set_source_rgba(0.235, 0.651, 0.969, 0.25)
             cr.rectangle(min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0))
             cr.fill_preserve()
@@ -629,27 +709,11 @@ class Editor(Gtk.Window):
             cr.set_line_width(1.2)
             cr.stroke()
 
-        # 1px frame around the screenshot
-        iw = self.img.get_width() * self.view.scale
-        ih = self.img.get_height() * self.view.scale
-        cr.set_source_rgba(1, 1, 1, 0.10)
-        cr.set_line_width(1)
-        cr.rectangle(self.view.ox - 0.5, self.view.oy - 0.5, iw + 1, ih + 1)
-        cr.stroke()
-
-    def _paint_content(self, cc: cairo.Context, width: int, height: int) -> None:
-        self.view.apply(cc)
-        cc.set_source_surface(self.img, 0, 0)
-        cc.paint()
-        for s in self.doc.shapes:
-            render.draw_shape(cc, self.img, s, self.view)
-        cc.restore()
-
     def queue_draw(self) -> None:
         self.area.queue_draw()
 
     def _invalidate(self) -> None:
-        self._cache_key = None
+        self._ink_key = None
         self.area.queue_draw()
 
     # ------------------------------------------------------------- commands
@@ -760,8 +824,8 @@ class Editor(Gtk.Window):
         self._drag = None
         self._band = None
         self.selected = None
-        self._cache = None
-        self._cache_key = None
+        self._texture = None
+        self._forget_ink()
         self.img = None
         self.doc = Doc()
         self._path = None
@@ -788,8 +852,8 @@ class Editor(Gtk.Window):
         self.doc = Doc()
         self._preview = None
         self.selected = None
-        self._cache = None
-        self._cache_key = None
+        self._texture = None
+        self._forget_ink()
         self._band = None
         self.entry_frame.set_visible(False)
         self.help_box.set_visible(False)
@@ -878,7 +942,6 @@ class Editor(Gtk.Window):
             return True
         if keyval in (Gdk.KEY_0, Gdk.KEY_KP_0):
             self.view.zoom = 1.0
-            self._cache = None
             self.area.queue_draw()
             return True
         if keyval == Gdk.KEY_Tab:
