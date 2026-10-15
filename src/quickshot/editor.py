@@ -30,7 +30,6 @@ PAD = 18              # margin around the screenshot
 TOOLBAR_SPACE = 74    # room for the floating toolbar below the image
 MAX_SCREEN_SHARE = 0.86   # never fill the whole monitor
 MIN_IMAGE_SCALE = 0.2
-MAX_IMAGE_SCALE = 1.0
 MIN_WINDOW_W = 640
 MIN_WINDOW_H = 360
 WIDTHS = [1.5, 2.5, 3.5, 5.0, 7.0, 10.0, 14.0]
@@ -61,6 +60,14 @@ HELP_ROWS = [
 ]
 
 
+def _monitor_scale(mon) -> float:
+    if mon is None:
+        return 1.0
+    if hasattr(mon, "get_scale"):
+        return mon.get_scale() or 1.0
+    return float(mon.get_scale_factor() or 1)
+
+
 class Editor(Gtk.Window):
     def __init__(self, app) -> None:
         super().__init__(application=app.gtk_app, title="Quickshot")
@@ -74,6 +81,7 @@ class Editor(Gtk.Window):
         self.size_idx = 3
         self.selected: Shape | None = None
         self.last_draw_tool = POINTER
+        self.pixel_ratio = 1.0
 
         self._preview: Shape | None = None
         self._drag: dict | None = None
@@ -213,13 +221,15 @@ class Editor(Gtk.Window):
             return None, None
 
     def _size_for_capture(self) -> tuple[int, int]:
-        _mon, geo = self._monitor_for_pointer()
+        mon, geo = self._monitor_for_pointer()
+        self.pixel_ratio = _monitor_scale(mon)
         iw, ih = self.img.get_width(), self.img.get_height()
         chrome_x, chrome_y = 2 * PAD, 2 * PAD + TOOLBAR_SPACE
         screen_w, screen_h = (geo.width, geo.height) if geo else (1600, 1000)
         max_w = max(MIN_WINDOW_W, int(screen_w * MAX_SCREEN_SHARE))
         max_h = max(MIN_WINDOW_H, int(screen_h * MAX_SCREEN_SHARE))
-        scale = min((max_w - chrome_x) / iw, (max_h - chrome_y) / ih, MAX_IMAGE_SCALE)
+        native = 1.0 / self.pixel_ratio
+        scale = min((max_w - chrome_x) / iw, (max_h - chrome_y) / ih, native)
         self.view.fit = max(scale, MIN_IMAGE_SCALE)
         w = int(iw * self.view.fit) + chrome_x
         h = int(ih * self.view.fit) + chrome_y
@@ -234,7 +244,7 @@ class Editor(Gtk.Window):
         # the image inside the chrome if the size was clamped.
         avail_w = max(64, w - 2 * PAD)
         avail_h = max(64, h - 2 * PAD - TOOLBAR_SPACE)
-        self.view.fit = min(avail_w / iw, avail_h / ih, MAX_IMAGE_SCALE)
+        self.view.fit = min(avail_w / iw, avail_h / ih, 1.0 / self.pixel_ratio)
         if self.view.zoom <= 1.0:
             self.view.scale = self.view.fit
             self.view.ox = (w - iw * self.view.scale) / 2
