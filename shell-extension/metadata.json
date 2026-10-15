@@ -1,0 +1,8 @@
+{
+  "uuid": "quickshot-focus@aj-505.github.io",
+  "name": "Quickshot Focus",
+  "description": "Raises the Quickshot editor when a capture finishes. GNOME's focus-stealing prevention otherwise keeps it behind the window you were using. It only acts on Quickshot's own window.",
+  "shell-version": ["45", "46", "47", "48", "49", "50", "51"],
+  "url": "https://github.com/AJ-505/quickshot",
+  "version": 1
+}

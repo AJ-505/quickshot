@@ -1,191 +1,170 @@
 # Quickshot
 
-Press **Super+Shift+S** (or **Print**). Drag a region. Annotate it. Press **Enter**.
+Press **Super+Shift+S**. Select a region with GNOME's own screenshot overlay.
+The editor opens with your capture. Draw an arrow, press **Enter**, and paste.
 
-The image is on your clipboard and the editor is gone.
+The image is on your clipboard and the editor is gone. It is built for the
+"snap, point at the thing, paste it into a chat or an AI agent" loop.
 
-![annotation tools](docs/tools.png)
+![The editor with an arrow, a box, text, a numbered step and a redaction](docs/editor.png)
 
-## Why this exists
+## Requirements
 
-Most screenshot tools on Linux fall into one of two failure modes: they replace
-the native capture flow with their own (so the muscle memory you already have
-stops working), or they keep the native flow but bolt an editor on afterwards
-that is slow to appear and awkward to drive.
+- GNOME on Wayland (developed on GNOME Shell 50, Ubuntu)
+- Python 3.10 or newer with GTK 4 bindings
 
-Quickshot keeps the part you already like and replaces only the part that isn't
-good enough. Capture goes through the XDG desktop portal, which on GNOME is the
-*exact same* drag-to-select overlay that PrintScreen already gives you — same
-feel, same keyboard, same muscle memory. What changes is the destination: the
-result lands in an editor that is already built and waiting, so there is no
-launch delay and no second screenshot tool to learn.
+```sh
+sudo apt install python3-gi gir1.2-gtk-4.0 python3-cairo wl-clipboard xdg-desktop-portal-gnome
+```
 
 ## Install
 
 ```sh
+git clone https://github.com/AJ-505/quickshot
+cd quickshot
 ./install.sh
 ```
 
-No root required. Installs to `~/.local/share/quickshot`, registers a systemd
-user service, and binds the hotkeys.
+No root needed. The installer:
 
-To choose your own hotkeys:
+1. copies Quickshot to `~/.local/share/quickshot` and the launchers to `~/.local/bin`
+2. starts a small resident user service (`quickshot.service`), so the editor opens with no start-up delay
+3. installs the **Quickshot Focus** GNOME Shell extension (see below)
+4. binds **Super+Shift+S**. `Print` stays on GNOME's plain screenshot UI
+
+**Log out and back in once after the first install.** GNOME only loads a new
+shell extension at login.
+
+Other hotkeys:
 
 ```sh
 ./install.sh '<Super><Shift>s' '<Ctrl><Alt>s'
 ```
 
-Default is `<Super><Shift>s` and `Print`. Existing custom keybindings are
-preserved, never replaced.
+Remove everything with `./uninstall.sh`. It restores your original GNOME
+bindings, and it leaves your other custom shortcuts alone.
 
-Revert with `./uninstall.sh`, which restores GNOME's own Print behaviour from
-the values it recorded at install time. Verified round-trip: it restores
-`show-screenshot-ui` to `['Print']`, removes only the Quickshot entries, and
-stops the service.
+### Why a shell extension?
 
-### A note on `Fn`
-
-`Fn` cannot be used in a GNOME hotkey, and neither can a bare modifier like
-`<Shift_R>` on its own. Two independent reasons:
-
-- Most laptops consume `Fn` in the firmware, so it never reaches Linux. You can
-  check your own machine with `python3 tools/keyprobe.py`, which reports both
-  raw kernel events and what GNOME sees.
-- GTK's accelerator parser requires a non-modifier key. Verified on this
-  machine: `Gtk.accelerator_parse('<FnRightShift>')` and `('<Shift_R>')` both
-  return *not found*, while `Print` resolves correctly.
-
-### Dependencies
-
-Already present on a normal Ubuntu/GNOME install:
-
-```
-python3-gi  gir1.2-gtk-4.0  python3-cairo  xdg-desktop-portal-gnome  wl-clipboard
-```
-
-`install.sh` checks for these and tells you what is missing if something is not
-there.
+GNOME's focus-stealing prevention does not let a background service raise a
+window. Without help, the editor opens *behind* the window you were using and
+GNOME shows a "Quickshot is ready" banner. The extension has about 40 lines. It
+raises one window only, the one with the application id `dev.quickshot.Quickshot`.
+Source: [`shell-extension/extension.js`](shell-extension/extension.js).
 
 ## Keys
 
-Everything is one keystroke. The toolbar is a teaching aid, not something you
-have to aim at.
+Every action has one key. The toolbar shows each key under its button, and
+**H** opens the full cheat sheet.
+
+![Shortcut panel](docs/shortcuts.png)
 
 ### Tools
 
 | Key | Tool |
 |-----|------|
-| `P` | Pointer / arrow (drag for an arrow, click for a cursor glyph) |
+| `P` | Arrow (default) |
+| `M` | Mouse cursor glyph (click to place) |
 | `R` | Rectangle |
 | `O` | Ellipse |
 | `L` | Line (hold `Shift` to snap to 45°) |
 | `D` | Freehand |
-| `T` | Text |
-| `B` | Redact — drag a region |
-| `N` | Numbered step (auto-increments, renumbers when you move them) |
-| `V` | Select / move an existing annotation |
+| `T` | Text (type in place, `Enter` to place, `Esc` to cancel) |
+| `B` | Redact (mosaic; `Shift+B` switches to blur) |
+| `N` | Numbered step (counts up, renumbers when you move one) |
+| `V` | Select and move |
+| `Tab` | Switch between select and the last drawing tool |
 
-### Adjusting
+### Adjust
 
 | Key | Action |
 |-----|--------|
-| `C` / `Shift+C` | Cycle colour forwards / back |
-| `,` `.` | Stroke width |
-| `[` `]` | Text size / step radius |
-| `Shift+B` | Switch redaction between mosaic and blur |
-| wheel | Zoom at the pointer |
+| `C` / `Shift+C` | Next / previous colour |
+| `,` `.` | Thinner / thicker stroke |
+| `[` `]` | Smaller / larger text and steps |
+| wheel, `+` `-` | Zoom at the pointer |
 | `0` | Reset zoom |
-| middle-drag, right-drag, or `Space`+drag | Pan |
-| `Tab` | Jump between the select tool and the last drawing tool |
+| `Space`+drag, middle-drag, right-drag | Pan |
 | arrows | Nudge the selection (`Shift` for 10 px) |
+| `Delete` | Remove the selection |
 
-### Finishing
+### Finish
 
 | Key | Action |
 |-----|--------|
-| `Enter` | **Copy to clipboard and close** |
+| `Enter` | **Copy to the clipboard and close** |
 | `Ctrl+S` | Save to `~/Pictures/Screenshots` and close |
 | `Esc` | Discard and close |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
-| `Delete` | Remove the selected annotation |
-| `H` | Shortcut panel |
 
-## Design notes
+## Troubleshooting
 
-A few decisions that are not obvious from the code:
+```sh
+quickshot --status                          # what the service thinks it is doing
+journalctl --user -u quickshot.service -n 50 # service log, includes capture-to-editor latency
+```
 
-**The portal is the seam.** `org.gnome.Shell.Screenshot` refuses
-`InteractiveScreenshot` to ordinary clients — GNOME trusts only the shell there.
-The portal (`org.freedesktop.portal.Screenshot`) is the supported route, and on
-GNOME it drives the same `ScreenshotUI` the shell does. So the overlay the user
-sees is the native one, without patching the shell or installing an extension.
+| Symptom | Cause |
+|---------|-------|
+| Editor opens behind other windows, "Quickshot is ready" banner | The focus extension is not loaded yet. Log out and back in. Check with `gnome-extensions info quickshot-focus@aj-505.github.io`. |
+| Nothing happens on Super+Shift+S | Run `quickshot` in a terminal. If that works, the binding is missing: run `./install.sh` again. |
+| The editor is blurry | Report it with your monitor scale. Captures should show at native pixels. |
 
-**A discarded shot leaves nothing behind.** The portal writes into its own
-Screenshots folder. Quickshot immediately *moves* the file into
-`~/.cache/quickshot` and treats that as the working copy, deleting it when the
-editor closes. Esc costs you nothing.
+## How it works
 
-**The hotkey target is a shell script.** The daemon is a resident service, so
-waking it should be a socket write. Measured on the development machine:
-`printf 1 | nc -U` round-trips in ~13 ms against ~325 ms for starting a Python
-interpreter. `bin/quickshot-py` remains as a fallback that also starts the
-daemon if it is not running.
-
-**Redaction uses GdkPixbuf, not cairo.** Cairo's filters interpolate between
-samples rather than averaging, so a 9× reduction point-samples a sparse grid and
-drops thin strokes — redacted text stays crisp and legible, which defeats the
-point. GdkPixbuf's BILINEAR scaler is a genuine box average. Magnification goes
-back to cairo, which handles that direction correctly. The patch is memoised,
-because a redaction is regenerated every frame while it is dragged.
-
-**Clipboard via `wl-copy`.** This GDK build does not introspect
-`gdk_clipboard_set_texture`, and its own clipboard view reported an empty format
-set and "No compatible transfer format found" even for plain text on the
-development machine. `wl-copy` owns the selection independently and is
-verifiably correct; Gdk remains the fallback. Override with
-`QUICKSHOT_CLIPBOARD=gdk|wl-copy`.
-
-**One process, pre-warmed.** The editor window is constructed once at startup and
-merely shown and hidden thereafter, so a capture never pays for building widgets
-or decoding a stylesheet.
+- **The portal is the capture.** Quickshot asks `org.freedesktop.portal.Screenshot`
+  for an interactive capture. On GNOME this is the same overlay that `Print`
+  shows, so selection works the way you already know.
+- **A discarded shot leaves nothing behind.** The portal file moves into
+  `~/.cache/quickshot` at once and is deleted when the editor closes.
+- **The hotkey is a socket write.** `bin/quickshot` is a shell script that wakes
+  the resident service over a Unix socket, which takes about 13 ms. Starting
+  Python would take about 300 ms. The editor window is built once at login.
+  Measured from portal answer to visible editor: about 60 ms for a 1280x800
+  capture and 0.4 to 0.9 s for 4K.
+- **Native pixels.** On a fractionally scaled monitor (for example 125%), the
+  capture is shown 1:1 with physical pixels, so text stays sharp.
+- **Redaction destroys detail.** It box-averages through GdkPixbuf. Cairo's
+  downscale filters point-sample and can leave thin text legible.
+- **Clipboard through `wl-copy`**, with GDK as the fallback. Override with
+  `QUICKSHOT_CLIPBOARD=gdk`.
 
 ## Layout
 
 ```
-bin/quickshot        hotkey target: shell, signals the daemon over a unix socket
-bin/quickshot-py     fallback: same job in Python, starts the daemon if needed
-bin/quickshotd       resident service entry point
+bin/quickshot          hotkey target: wakes the service over a Unix socket
+bin/quickshot-py       fallback launcher, starts the service if it is not running
+bin/quickshotd         resident service entry point
 src/quickshot/
-  service.py         daemon: control socket, capture lifecycle, notifications
-  capture.py         portal client; moves the result into the cache
-  editor.py          the editor window, input, keymap, commit actions
-  model.py           shapes and undo/redo
-  render.py          cairo drawing, redaction
-  toolbar.py         floating bar, auto-hiding
-  imageio.py         PNG encode/decode, clipboard, save
-  bind.py            hotkey install/uninstall/status
-  style.py           CSS
-  icons.py           inline SVG icons
-tools/keyprobe.py    report which keys your keyboard actually delivers
-tests/               see below
+  service.py           service: control socket, capture lifecycle
+  capture.py           portal client
+  editor.py            editor window, input, keymap, commit actions
+  model.py             shapes, undo and redo
+  render.py            cairo drawing and redaction
+  toolbar.py           toolbar
+  imageio.py           PNG, clipboard, save
+  bind.py              GNOME keybinding install and uninstall
+  style.py, icons.py   CSS and inline SVG icons
+shell-extension/       Quickshot Focus GNOME Shell extension
+data/                  desktop entry (gives notifications a proper name)
+tools/preview.py       open the editor on any PNG, no portal needed
+tools/snap_editor.py   render the editor to a PNG without showing it to you
+tools/keyprobe.py      report which keys your keyboard really sends
+tests/                 run with ./tests/run_all.sh (needs a GNOME session) or ./tests/run_ci.sh
 ```
 
-## Tests
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Short version:
 
 ```sh
-./tests/run_all.sh
+./tests/run_all.sh                      # full suite, needs a GNOME Wayland session
+python3 tools/preview.py some.png       # open the editor on an image
+ruff check .
 ```
 
-| Test | What it proves |
-|------|----------------|
-| `icon_verify` | Every toolbar icon parses and loads |
-| `redact_verify` | Redaction is opaque, destroys detail, does not mutate the source, and is safe when a box hangs off the edge |
-| `keymap_test` | 37 assertions driving the real key handler |
-| `gui_smoke` | The window builds, draws, and composites/saves/copies |
-| `e2e_test` | Hotkey → socket → editor → annotate → Enter → closed |
-| `clipboard_verify` | Another process (`wl-paste`) can decode what Enter put there |
-| `latency_test` | Hotkey-to-launcher distribution, daemon in its own process |
+The full suite writes to your clipboard during the clipboard tests.
 
-`clipboard_verify` reports `INCONCLUSIVE` rather than failing when another
-process is contending for the clipboard, which happens on a shared machine. Set
-`QUICKSHOT_TEST_STRICT=1` to make that fatal.
+## License
+
+MIT. See [LICENSE](LICENSE).

@@ -107,6 +107,32 @@ else
   say "         systemctl --user restart org.gnome.SettingsDaemon.MediaKeys.target"
 fi
 
+# --- focus extension --------------------------------------------------------
+EXT_UUID="quickshot-focus@aj-505.github.io"
+mkdir -p "$HOME/.local/share/applications"
+cp "$HERE/data/dev.quickshot.Quickshot.desktop" "$HOME/.local/share/applications/"
+relogin=0
+if command -v gnome-extensions >/dev/null 2>&1; then
+  pack_dir=$(mktemp -d)
+  gnome-extensions pack --force -o "$pack_dir" "$HERE/shell-extension" >/dev/null 2>&1
+  gnome-extensions install --force "$pack_dir/$EXT_UUID.shell-extension.zip" >/dev/null 2>&1
+  rm -rf "$pack_dir"
+  if gnome-extensions enable "$EXT_UUID" >/dev/null 2>&1; then
+    say "focus extension enabled"
+  else
+    enabled=$(gsettings get org.gnome.shell enabled-extensions)
+    case "$enabled" in
+      *"$EXT_UUID"*) ;;
+      "@as []") gsettings set org.gnome.shell enabled-extensions "['$EXT_UUID']" ;;
+      *) gsettings set org.gnome.shell enabled-extensions "${enabled%]}, '$EXT_UUID']" ;;
+    esac
+    relogin=1
+    say "focus extension installed; GNOME loads it at your next login"
+  fi
+else
+  say "WARNING: gnome-extensions not found; the editor may open behind other windows"
+fi
+
 # --- hotkeys ----------------------------------------------------------------
 python3 "$PREFIX/src/quickshot/bind.py" install "${BINDINGS[@]}"
 for b in "${BINDINGS[@]}"; do
@@ -117,3 +143,8 @@ say "capture still uses GNOME's native drag-to-select overlay"
 echo
 echo "Done. Press ${BINDINGS[0]}, drag a region, annotate, then Enter to copy."
 echo "Revert with: $HERE/uninstall.sh"
+if [ "$relogin" -eq 1 ]; then
+  echo
+  echo "Log out and back in once. Until then GNOME may open the editor behind your"
+  echo "current window and show a \"Quickshot is ready\" banner instead."
+fi

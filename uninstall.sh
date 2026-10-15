@@ -19,6 +19,11 @@ rm -f "$UNITDIR/quickshot.service"
 systemctl --user daemon-reload || true
 say "service removed"
 
+gnome-extensions uninstall quickshot-focus@aj-505.github.io >/dev/null 2>&1 || \
+  rm -rf "$HOME/.local/share/gnome-shell/extensions/quickshot-focus@aj-505.github.io"
+rm -f "$HOME/.local/share/applications/dev.quickshot.Quickshot.desktop"
+say "focus extension removed"
+
 rm -f "$BINDIR/quickshot" "$BINDIR/quickshot-py" "$BINDIR/quickshotd"
 rm -rf "$PREFIX"
 rm -rf "$HOME/.cache/quickshot"

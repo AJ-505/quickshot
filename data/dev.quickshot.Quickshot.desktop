@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Quickshot
+Comment=Screenshot annotation editor
+Exec=quickshot
+Icon=applets-screenshooter
+NoDisplay=true
+StartupNotify=false
