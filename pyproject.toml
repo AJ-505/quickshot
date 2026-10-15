@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quickshot"
+version = "0.1.0"
+description = "Screenshot annotation editor for GNOME on Wayland, built on GTK 4 and the XDG desktop portal."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "AJ-505" }]
+keywords = ["screenshot", "annotation", "gnome", "wayland", "gtk4", "portal"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: GTK",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics :: Capture :: Screen Capture",
+]
+
+[project.urls]
+Homepage = "https://github.com/AJ-505/quickshot"
+Repository = "https://github.com/AJ-505/quickshot"
+Issues = "https://github.com/AJ-505/quickshot/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E402"]
