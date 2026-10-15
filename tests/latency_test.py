@@ -1,75 +1,74 @@
 #!/usr/bin/env python3
-"""Measure hotkey -> editor-visible latency with the service in its own process.
+"""Hotkey to editor-visible latency through the real daemon path.
 
-This is the production shape: a separate resident daemon, woken over the unix
-socket, with a fullscreen window presented. Reports the distribution rather
-than a single sample, because the whole promise is that this feels instant.
+A fresh `bin/quickshotd` runs in its own process on an isolated socket, with
+QUICKSHOT_TEST_IMAGE standing in for the portal capture. The real
+`bin/quickshot` launcher fires the trigger, then the daemon's status probe is
+polled until it reports a visible editor holding the image. Prints the
+measured latency, and fails if the editor takes longer than the bound, which
+is what the 100 s deferred-show bug would have tripped.
 """
 import os
+import socket
 import statistics
 import subprocess
 import sys
 import time
-import tempfile
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+import support  # noqa: F401, E402 (must come first)
 
-import cairo  # noqa: E402
-import gi  # noqa: E402
-gi.require_version("Gtk", "4.0")
-from gi.repository import GLib, Gtk  # noqa: E402
-
-from quickshot.render import ctx  # noqa: E402
 from quickshot.service import socket_path  # noqa: E402
 
-N = 12
+BOUND_MS = 1500
+SIZES = [("1280x800", 1280, 800), ("4K", 3840, 2160)]
+ROUNDS = 3
 
 
-def make(path, w, h):
-    s = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
-    c = ctx(s)
-    c.set_source_rgb(0.1, 0.12, 0.15)
-    c.paint()
-    c.set_source_rgb(0.7, 0.75, 0.85)
-    c.select_font_face("Monospace", 0, 0)
-    c.set_font_size(16)
-    for i in range(h // 24):
-        c.move_to(20, 40 + i * 24)
-        c.show_text(f"row {i}")
-    s.write_to_png(path)
-    return path
+def status() -> str:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(1.0)
+    try:
+        s.connect(socket_path())
+        s.sendall(b"s")
+        data = b""
+        while not data.endswith(b"\n"):
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+        return data.decode(errors="replace")
+    except OSError:
+        return ""
+    finally:
+        s.close()
 
 
-def main():
-    tmpd = tempfile.mkdtemp(prefix="qs-lat-")
-    small = make(os.path.join(tmpd, "s.png"), 1280, 800)
-    big = make(os.path.join(tmpd, "b.png"), 3840, 2160)
+def wait_for(pred, timeout):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.002)
+    return False
 
-    daemon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "quickshotd")
-    env = dict(os.environ, QUICKSHOT_TEST_IMAGE=big)
+
+def sample(image: str) -> float | None:
+    daemon = os.path.join(support.ROOT, "bin", "quickshotd")
+    launcher = os.path.join(support.ROOT, "bin", "quickshot")
+    env = dict(os.environ, QUICKSHOT_TEST_IMAGE=image)
     proc = subprocess.Popen([daemon], env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        deadline = time.time() + 20
-        while time.time() < deadline and not os.path.exists(socket_path()):
-            time.sleep(0.1)
-        if not os.path.exists(socket_path()):
-            print("FAIL: daemon never created its socket")
-            return 1
-        time.sleep(1.0)  # let it settle
-
-        launcher = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin", "quickshot")
-        samples = []
-        for i in range(N):
-            t0 = time.perf_counter()
-            r = subprocess.run([launcher], capture_output=True, timeout=10)
-            samples.append((time.perf_counter() - t0) * 1000)
-            # the editor is up and modal; close it so the next trigger is accepted
-            subprocess.run([launcher], capture_output=True, timeout=10)
-            time.sleep(0.35)
-            if r.returncode != 0:
-                print(f"FAIL: launcher exit {r.returncode}: {r.stderr.decode()[:200]}")
-                return 1
+        if not wait_for(lambda: "visible=False" in status(), 20):
+            print("  daemon never became ready")
+            return None
+        t0 = time.perf_counter()
+        r = subprocess.run([launcher], capture_output=True, timeout=10)
+        if r.returncode != 0:
+            print(f"  launcher exit {r.returncode}: {r.stderr.decode()[:200]}")
+            return None
+        ok = wait_for(lambda: "visible=True has_image=yes" in status(), BOUND_MS / 1000 * 4)
+        return (time.perf_counter() - t0) * 1000 if ok else None
     finally:
         proc.terminate()
         try:
@@ -77,16 +76,26 @@ def main():
         except subprocess.TimeoutExpired:
             proc.kill()
 
-    samples.sort()
-    print(f"hotkey -> launcher exit, {N} samples (4K capture, fullscreen window)")
-    print(f"  min    {samples[0]:6.1f} ms")
-    print(f"  median {statistics.median(samples):6.1f} ms")
-    print(f"  p90    {samples[int(len(samples) * 0.9) - 1]:6.1f} ms")
-    print(f"  max    {samples[-1]:6.1f} ms")
-    if statistics.median(samples) > 250:
-        print("FAIL: median wake-up is too slow to feel instant")
+
+def main() -> int:
+    failed = False
+    for label, w, h in SIZES:
+        samples = []
+        for i in range(ROUNDS):
+            ms = sample(support.make_png(f"{label}-{i}.png", w, h))
+            if ms is None:
+                print(f"FAIL: {label} editor never became visible with its image")
+                return 1
+            samples.append(ms)
+        print(f"hotkey -> editor visible, {label}, {ROUNDS} fresh daemons: "
+              f"min {min(samples):.0f} ms  median {statistics.median(samples):.0f} ms  "
+              f"max {max(samples):.0f} ms")
+        if max(samples) > BOUND_MS:
+            print(f"FAIL: {label} max {max(samples):.0f} ms exceeds {BOUND_MS} ms")
+            failed = True
+    if failed:
         return 1
-    print("PASS  wake-up is instant enough to feel like a native screenshot key")
+    print(f"PASS  hotkey to visible editor stays under {BOUND_MS} ms")
     return 0
 
 

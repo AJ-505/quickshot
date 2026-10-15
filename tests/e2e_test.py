@@ -8,20 +8,18 @@ wake-up path is genuinely exercised rather than simulated.
 import os
 import subprocess
 import sys
-import tempfile
 import time
 import traceback
 
-ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-sys.path.insert(0, os.path.join(ROOT, "src"))
+import support  # noqa: E402 (must come first)
 
-import cairo  # noqa: E402
+ROOT = support.ROOT
+
 import gi  # noqa: E402
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 
-from quickshot.render import ctx  # noqa: E402
 from quickshot.service import Quickshot, socket_path  # noqa: E402
 
 W, H = 800, 500
@@ -29,30 +27,12 @@ problems: list[str] = []
 state = {"visible_at": None, "img": None, "shapes": 0, "closed": False}
 
 
-def make_shot(path):
-    s = cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)
-    c = ctx(s)
-    c.set_source_rgb(0.12, 0.13, 0.16)
-    c.paint()
-    c.set_source_rgb(0.85, 0.86, 0.9)
-    c.select_font_face("Monospace", 0, 0)
-    c.set_font_size(18)
-    for i in range(10):
-        c.move_to(30, 60 + i * 30)
-        c.show_text(f"captured line {i}")
-    s.write_to_png(path)
-    return path
-
-
 def launcher():
     return os.path.join(ROOT, "bin", "quickshot")
 
 
 def main():
-    tmpd = tempfile.mkdtemp(prefix="qs-e2e-")
-    shot = make_shot(os.path.join(tmpd, "shot.png"))
-    os.environ["QUICKSHOT_TEST_IMAGE"] = shot
-    os.environ["XDG_RUNTIME_DIR"] = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+    os.environ["QUICKSHOT_TEST_IMAGE"] = support.make_png("shot.png", W, H)
 
     app = Quickshot()
 
@@ -90,7 +70,6 @@ def main():
             return GLib.SOURCE_CONTINUE
         dt = (time.monotonic() - state["t0"]) * 1000
         err = proc.stderr.read().decode(errors="replace").strip()
-        print(f"launcher round trip: {dt:.0f} ms, exit {proc.returncode}")
         if proc.returncode != 0:
             problems.append(f"launcher exited {proc.returncode}: {err}")
         # Latency is not asserted here: this test runs the server inside the
@@ -135,8 +114,7 @@ def main():
 
     def step5():
         # the cache file should be cleaned up when the shot is dismissed
-        cache = os.path.join(os.environ.get("XDG_CACHE_HOME",
-                                            os.path.expanduser("~/.cache")), "quickshot")
+        cache = os.path.join(support.CACHE, "quickshot")
         if os.path.isdir(cache) and os.listdir(cache):
             problems.append(f"cached shot files left behind: {os.listdir(cache)}")
         app.gtk_app.quit()
