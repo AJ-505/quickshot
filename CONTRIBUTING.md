@@ -10,6 +10,8 @@ Install the system packages:
 sudo apt install python3-gi gir1.2-gtk-4.0 python3-cairo wl-clipboard xdg-desktop-portal-gnome
 ```
 
+The tests also need `python3-numpy`.
+
 Run Quickshot from the repo:
 
 ```sh
