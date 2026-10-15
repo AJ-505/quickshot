@@ -18,7 +18,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gio, GLib, Gtk  # noqa: E402
 
-from .capture import Capture, CaptureCancelled
+from .capture import Capture, CaptureCancelled, purge_stale_shots
 from .editor import Editor
 
 
@@ -88,6 +88,8 @@ class Quickshot:
         if not self._listen():
             sys.stderr.write("quickshot: another instance owns the socket; exiting\n")
             self.gtk_app.quit()
+            return
+        purge_stale_shots()
 
     def _listen(self) -> bool:
         """Bind the control socket. Returns False if another instance owns it.

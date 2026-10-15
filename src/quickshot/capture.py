@@ -34,6 +34,15 @@ def cache_dir() -> str:
     return CACHE_DIR
 
 
+def purge_stale_shots() -> None:
+    for name in os.listdir(cache_dir()):
+        if name.startswith("shot-") and name.endswith(".png"):
+            try:
+                os.remove(os.path.join(CACHE_DIR, name))
+            except OSError:
+                pass
+
+
 class CaptureCancelled(Exception):
     """The user dismissed the selection overlay."""
 
