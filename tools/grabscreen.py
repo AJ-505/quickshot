@@ -21,8 +21,12 @@ def main() -> int:
     dest = sys.argv[1] if len(sys.argv) > 1 else "screen.png"
     bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
     done = {"ok": False}
+    loop = GLib.MainLoop()
+    token = f"probe{int(time.time())}"
 
     def on_response(*a):
+        if not a[2].endswith("/" + token):
+            return None
         params = a[5]
         code, results = params.unpack()
         uri = None
@@ -34,19 +38,18 @@ def main() -> int:
             src.copy(Gio.File.new_for_path(os.path.abspath(dest)),
                      Gio.FileCopyFlags.OVERWRITE, None, None, None)
             done["ok"] = True
-        GLib.MainLoop().quit()
+        loop.quit()
         return None
 
-    opts = {"interactive": GLib.Variant.new_boolean(False),
-            "handle_token": GLib.Variant.new_string(f"probe{int(time.time())}")}
-    reply = bus.call_sync(BUS, PATH, "org.freedesktop.portal.Screenshot", "Screenshot",
-                          GLib.Variant("(sa{sv})", ("", opts)),
-                          GLib.VariantType("(o)"), Gio.DBusCallFlags.NONE, 20000, None)
     bus.signal_subscribe(BUS, "org.freedesktop.portal.Request", "Response",
-                         reply.unpack()[0], None, Gio.DBusSignalFlags.NONE,
-                         on_response)
-    GLib.timeout_add_seconds(25, lambda: GLib.MainLoop().quit())
-    GLib.MainLoop().run()
+                         None, None, Gio.DBusSignalFlags.NONE, on_response)
+    opts = {"interactive": GLib.Variant.new_boolean(False),
+            "handle_token": GLib.Variant.new_string(token)}
+    bus.call_sync(BUS, PATH, "org.freedesktop.portal.Screenshot", "Screenshot",
+                  GLib.Variant("(sa{sv})", ("", opts)),
+                  GLib.VariantType("(o)"), Gio.DBusCallFlags.NONE, 20000, None)
+    GLib.timeout_add_seconds(25, loop.quit)
+    loop.run()
     print(("wrote " + dest) if done["ok"] else "capture failed")
     return 0 if done["ok"] else 1
 
