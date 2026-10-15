@@ -17,8 +17,6 @@ is the usual reason a "Fn + something" shortcut cannot be bound.
 from __future__ import annotations
 
 import argparse
-import ctypes
-import ctypes.util
 import glob
 import os
 import struct
@@ -58,7 +56,6 @@ def keyname(code: int) -> str:
 
 def watch_evdev(seconds: float) -> None:
     """Print raw kernel key events. Catches keys the desktop hides."""
-    libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
     fd = os.open("/dev/input/event0", os.O_RDONLY)
     fmt = "llHHi"  # time sec, usec, type, code, value
     size = struct.calcsize(fmt)

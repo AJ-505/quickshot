@@ -187,7 +187,7 @@ def _validated(vtype: str, text: str) -> str:
     try:
         GLib.Variant.parse(GLib.VariantType.new(vtype), text, None, None)
     except Exception as exc:
-        raise RuntimeError(f"refusing to write invalid GVariant {text!r}: {exc}")
+        raise RuntimeError(f"refusing to write invalid GVariant {text!r}: {exc}") from exc
     return text
 
 

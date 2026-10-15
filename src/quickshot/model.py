@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from typing import List, Tuple
 
-RGBA = Tuple[float, float, float, float]
+RGBA = tuple[float, float, float, float]
 
 # Tool identifiers, in toolbar order.
 POINTER = "pointer"
+CURSOR = "cursor"
 RECT = "rect"
 ELLIPSE = "ellipse"
 LINE = "line"
@@ -23,11 +23,11 @@ BLUR = "blur"
 STEP = "step"
 SELECT = "select"
 
-TOOLS = [POINTER, RECT, ELLIPSE, LINE, FREEHAND, TEXT, BLUR, STEP]
+TOOLS = [POINTER, CURSOR, RECT, ELLIPSE, LINE, FREEHAND, TEXT, BLUR, STEP]
 DRAW_TOOLS = set(TOOLS) - {SELECT}
 
 # Palette: index 0 is the default annotation colour.
-PALETTE: List[RGBA] = [
+PALETTE: list[RGBA] = [
     (1.000, 0.267, 0.267, 1.0),  # red
     (1.000, 0.647, 0.043, 1.0),  # amber
     (0.310, 0.878, 0.310, 1.0),  # green
@@ -55,18 +55,18 @@ class Shape:
     x2: float = 0.0
     y2: float = 0.0
     color: RGBA = PALETTE[0]
-    width: float = 3.0          # stroke width, logical px
+    width: float = 5.0          # stroke width, logical px
     size: float = 22.0          # text font size / step radius, logical px
     text: str = ""
-    points: List[Tuple[float, float]] = field(default_factory=list)
+    points: list[tuple[float, float]] = field(default_factory=list)
     step: int = 0
     blur_mode: str = "mosaic"   # "mosaic" | "blur"
     block: float = 10.0         # mosaic block size, image px
 
-    def copy(self) -> "Shape":
+    def copy(self) -> Shape:
         return copy.deepcopy(self)
 
-    def bounds(self) -> Tuple[float, float, float, float]:
+    def bounds(self) -> tuple[float, float, float, float]:
         if self.kind == FREEHAND and self.points:
             xs = [p[0] for p in self.points]
             ys = [p[1] for p in self.points]
@@ -100,7 +100,7 @@ def _hit(shape: Shape, px: float, py: float, tol: float) -> bool:
         cx, cy = (shape.x + shape.x2) / 2, (shape.y + shape.y2) / 2
         r = shape.size + tol
         return (px - cx) ** 2 + (py - cy) ** 2 <= r * r
-    if shape.kind == TEXT:
+    if shape.kind in (TEXT, CURSOR):
         x0, y0, x1, y1 = shape.bounds()
         return x0 - tol <= px <= x1 + tol and y0 - tol <= py <= y1 + tol
     # Stroked geometry: distance to the segment.
@@ -109,7 +109,7 @@ def _hit(shape: Shape, px: float, py: float, tol: float) -> bool:
     L2 = vx * vx + vy * vy
     t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((px - ax) * vx + (py - ay) * vy) / L2))
     dx, dy = px - (ax + t * vx), py - (ay + t * vy)
-    reach = tol + shape.width / 2 + (shape.size / 2 if shape.kind == POINTER else 0.0)
+    reach = tol + (shape.width * 1.6 if shape.kind == POINTER else shape.width / 2)
     return dx * dx + dy * dy <= reach * reach
 
 
@@ -122,9 +122,9 @@ class Doc:
     """
 
     def __init__(self) -> None:
-        self.shapes: List[Shape] = []
-        self._undo: List[List[Shape]] = []
-        self._redo: List[List[Shape]] = []
+        self.shapes: list[Shape] = []
+        self._undo: list[list[Shape]] = []
+        self._redo: list[list[Shape]] = []
         self._dirty = False  # a coalescable in-progress edit
         self.rev = 0         # bumped on every mutation, for render caching
 

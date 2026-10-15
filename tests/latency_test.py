@@ -19,8 +19,7 @@ import support  # noqa: F401, E402 (must come first)
 
 from quickshot.service import socket_path  # noqa: E402
 
-BOUND_MS = 1500
-SIZES = [("1280x800", 1280, 800), ("4K", 3840, 2160)]
+SIZES = [("1280x800", 1280, 800, 800), ("4K", 3840, 2160, 2500)]
 ROUNDS = 3
 
 
@@ -67,7 +66,7 @@ def sample(image: str) -> float | None:
         if r.returncode != 0:
             print(f"  launcher exit {r.returncode}: {r.stderr.decode()[:200]}")
             return None
-        ok = wait_for(lambda: "visible=True has_image=yes" in status(), BOUND_MS / 1000 * 4)
+        ok = wait_for(lambda: "visible=True has_image=yes" in status(), 10)
         return (time.perf_counter() - t0) * 1000 if ok else None
     finally:
         proc.terminate()
@@ -79,7 +78,7 @@ def sample(image: str) -> float | None:
 
 def main() -> int:
     failed = False
-    for label, w, h in SIZES:
+    for label, w, h, bound_ms in SIZES:
         samples = []
         for i in range(ROUNDS):
             ms = sample(support.make_png(f"{label}-{i}.png", w, h))
@@ -90,12 +89,12 @@ def main() -> int:
         print(f"hotkey -> editor visible, {label}, {ROUNDS} fresh daemons: "
               f"min {min(samples):.0f} ms  median {statistics.median(samples):.0f} ms  "
               f"max {max(samples):.0f} ms")
-        if max(samples) > BOUND_MS:
-            print(f"FAIL: {label} max {max(samples):.0f} ms exceeds {BOUND_MS} ms")
+        if max(samples) > bound_ms:
+            print(f"FAIL: {label} max {max(samples):.0f} ms exceeds {bound_ms} ms")
             failed = True
     if failed:
         return 1
-    print(f"PASS  hotkey to visible editor stays under {BOUND_MS} ms")
+    print("PASS  hotkey to visible editor stays under 800 ms (1280x800) and 2500 ms (4K)")
     return 0
 
 

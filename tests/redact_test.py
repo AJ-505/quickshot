@@ -7,9 +7,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "src"))
 
 import cairo
+
 from quickshot import render
 from quickshot.model import BLUR, Shape
-from quickshot.render import View, ctx
+from quickshot.render import ctx
 
 W, H = 600, 200
 img = cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)

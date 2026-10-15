@@ -12,6 +12,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
 import gi
+
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
@@ -93,9 +94,9 @@ def main() -> int:
         out = os.path.join(save_dir, f"f{i:02d}.png") if save_dir else f"/tmp/qs_f{i:02d}.png"
         p = grab(out)
         dt = (time.monotonic() - t0) * 1000
-        l = mean_luma(p)
-        rows.append((i, round(dt), l))
-        print(f"  frame {i}: t+{dt:5.0f} ms   mean luma {l}")
+        luma = mean_luma(p)
+        rows.append((i, round(dt), luma))
+        print(f"  frame {i}: t+{dt:5.0f} ms   mean luma {luma}")
 
     vals = [r[2] for r in rows if r[2] is not None]
     if vals:

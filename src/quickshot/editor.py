@@ -18,11 +18,25 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Gdk, Gtk  # noqa: E402
 
 from . import imageio, render
-from .model import (BLUR, ELLIPSE, FREEHAND, LINE, PALETTE, POINTER, RECT,
-                    SELECT, STEP, TEXT, TOOLS, Doc, Shape)
+from .model import (
+    BLUR,
+    CURSOR,
+    ELLIPSE,
+    FREEHAND,
+    LINE,
+    PALETTE,
+    POINTER,
+    RECT,
+    SELECT,
+    STEP,
+    TEXT,
+    TOOLS,
+    Doc,
+    Shape,
+)
 from .render import View
 from .toolbar import Toolbar, install_css
 
@@ -30,34 +44,44 @@ PAD = 18              # margin around the screenshot
 TOOLBAR_SPACE = 74    # room for the floating toolbar below the image
 MAX_SCREEN_SHARE = 0.86   # never fill the whole monitor
 MIN_IMAGE_SCALE = 0.2
-MIN_WINDOW_W = 640
+MIN_WINDOW_W = 680
 MIN_WINDOW_H = 360
-WIDTHS = [1.5, 2.5, 3.5, 5.0, 7.0, 10.0, 14.0]
+WIDTHS = [2.0, 3.5, 5.0, 7.0, 9.0, 12.0, 16.0]
 
 SIZES = [12, 16, 20, 26, 32, 40, 52, 68]
 CURSORS = {
     SELECT: "default", RECT: "crosshair", ELLIPSE: "crosshair",
     LINE: "crosshair", FREEHAND: "pencil", TEXT: "text",
-    BLUR: "cell", STEP: "crosshair", POINTER: "crosshair",
+    BLUR: "cell", STEP: "crosshair", POINTER: "crosshair", CURSOR: "crosshair",
 }
 
 HELP_ROWS = [
     ("Tools", [
-        ("P", "pointer / arrow"), ("R", "rectangle"), ("O", "ellipse"),
+        ("P", "arrow"), ("M", "mouse cursor"), ("R", "rectangle"), ("O", "ellipse"),
         ("L", "line"), ("D", "freehand"), ("T", "text"),
         ("B", "redact"), ("N", "numbered step"), ("V", "select / move"),
     ]),
     ("Adjust", [
-        ("C", "cycle colour"), (", / .", "stroke width"),
-        ("[ / ]", "text size"), ("Shift+B", "mosaic <-> blur"),
-        ("wheel", "zoom"), ("0", "reset zoom"), ("space+drag", "pan"),
+        ("C", "cycle colour"), (",|.", "stroke width"),
+        ("[|]", "text and step size"), ("Shift+B", "mosaic / blur"),
+        ("Tab", "select / last tool"), ("Scroll", "zoom"), ("0", "reset zoom"),
+        ("Space+Drag", "pan"),
     ]),
     ("Finish", [
-        ("Enter", "copy + close"), ("Ctrl+S", "save + close"),
+        ("Enter", "copy and close"), ("Ctrl+S", "save and close"),
         ("Esc", "discard"), ("Ctrl+Z", "undo"), ("Ctrl+Shift+Z", "redo"),
-        ("Del", "delete selection"), ("H", "this panel"),
+        ("Del", "delete"), ("H", "this panel"),
     ]),
 ]
+
+
+def _has_extent(sh: Shape) -> bool:
+    dx, dy = abs(sh.x2 - sh.x), abs(sh.y2 - sh.y)
+    if sh.kind == FREEHAND:
+        return len(sh.points) > 1
+    if sh.kind in (POINTER, LINE):
+        return math.hypot(dx, dy) > 3.0
+    return dx > 1.0 and dy > 1.0
 
 
 def _monitor_scale(mon) -> float:
@@ -77,7 +101,7 @@ class Editor(Gtk.Window):
         self.view = View(scale=1.0, fit=1.0, ox=0.0, oy=0.0, zoom=1.0)
         self.tool = POINTER
         self.color = PALETTE[0]
-        self.width_idx = 2
+        self.width_idx = WIDTHS.index(5.0)
         self.size_idx = 3
         self.selected: Shape | None = None
         self.last_draw_tool = POINTER
@@ -184,6 +208,7 @@ class Editor(Gtk.Window):
         self._band = None
         self.tool = POINTER
         self.toolbar.set_tool(POINTER)
+        self.toolbar.set_width(WIDTHS[self.width_idx])
         self.view = View(scale=1.0, fit=1.0, ox=0.0, oy=0.0, zoom=1.0)
         w, h = self._size_for_capture()
         self.set_default_size(w, h)
@@ -248,7 +273,7 @@ class Editor(Gtk.Window):
         if self.view.zoom <= 1.0:
             self.view.scale = self.view.fit
             self.view.ox = (w - iw * self.view.scale) / 2
-            self.view.oy = PAD
+            self.view.oy = PAD + (avail_h - ih * self.view.scale) / 2
         else:
             self.view.scale = self.view.fit * self.view.zoom
             self._clamp_pan(w, h)
@@ -294,8 +319,7 @@ class Editor(Gtk.Window):
 
     def _on_press(self, gesture, _n_press, x, y) -> None:
         self.area.grab_focus()
-        self.toolbar.reveal()
-        self._schedule_toolbar_idle()
+        self._commit_pending_text()
         try:
             btn = gesture.get_current_button()
         except Exception:
@@ -315,14 +339,8 @@ class Editor(Gtk.Window):
             self._drag = {"mode": "text"}
             return
 
-        if self.tool == STEP:
-            self.doc.mark()
-            sh = Shape(kind=STEP, x=ix, y=iy, x2=ix, y2=iy, color=self.color,
-                       size=SIZES[self.size_idx], step=self.doc.next_step())
-            self.doc.add(sh, mark=False)
-            self.doc.end_mark()
-            self._invalidate()
-            self.last_draw_tool = STEP
+        if self.tool in (STEP, CURSOR):
+            self._stamp(self.tool, ix, iy)
             self._drag = {"mode": "step"}
             return
 
@@ -353,6 +371,15 @@ class Editor(Gtk.Window):
         self._preview = sh
         self._drag = {"mode": "draw", "ix": ix, "iy": iy}
         self.last_draw_tool = self.tool
+
+    def _stamp(self, kind: str, ix: float, iy: float) -> None:
+        sh = Shape(kind=kind, x=ix, y=iy, x2=ix, y2=iy, color=self.color,
+                   size=SIZES[self.size_idx],
+                   step=self.doc.next_step() if kind == STEP else 0)
+        self.doc.add(sh)
+        self.doc.end_mark()
+        self._invalidate()
+        self.last_draw_tool = kind
 
     def _drag_to(self, x: float, y: float, shift: bool) -> bool:
         d = self._drag
@@ -439,11 +466,7 @@ class Editor(Gtk.Window):
         if sh.kind != FREEHAND:
             ix, iy = self.view.to_image(x, y)
             sh.x2, sh.y2 = ix, iy
-        if sh.kind == POINTER:
-            sh.x2, sh.y2 = sh.x, sh.y   # a tap places the cursor glyph
-        drew = (abs(sh.x2 - sh.x) > 1.0 and abs(sh.y2 - sh.y) > 1.0) if sh.kind != FREEHAND \
-            else len(sh.points) > 1
-        if drew or sh.kind == POINTER:
+        if _has_extent(sh):
             self.doc.add(sh, mark=False)
         self.doc.end_mark()
         self.area.queue_draw()
@@ -466,53 +489,52 @@ class Editor(Gtk.Window):
                        valign=Gtk.Align.CENTER)
         panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         panel.add_css_class("qs-help")
-        title = Gtk.Label(label="Quickshot")
-        title.set_halign(Gtk.Align.START)
+        title = Gtk.Label(label="Shortcuts", xalign=0)
+        title.add_css_class("qs-help-title")
         panel.append(title)
 
-        cols = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        cols = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=26)
+        cols.add_css_class("qs-help-cols")
         for heading, rows in HELP_ROWS:
-            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            col.add_css_class("col")
-            head = Gtk.Label(label=heading)
-            head.set_halign(Gtk.Align.START)
-            head.add_css_class("k")
-            col.append(head)
-            for key, desc in rows:
-                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-                k = Gtk.Label(label=key)
-                k.add_css_class("k")
-                d = Gtk.Label(label=desc)
-                row.append(k)
-                row.append(d)
-                col.append(row)
-            cols.append(col)
+            cols.append(self._help_column(heading, rows))
         panel.append(cols)
 
-        foot = Gtk.Label(label="Enter copies to the clipboard and closes  •  Esc discards")
-        foot.add_css_class("foot")
-        foot.set_halign(Gtk.Align.START)
+        foot = Gtk.Label(label="Enter copies to the clipboard and closes.  Esc discards.", xalign=0)
+        foot.add_css_class("qs-help-foot")
         panel.append(foot)
-
         wrap.append(panel)
         return wrap
+
+    def _help_column(self, heading: str, rows: list) -> Gtk.Grid:
+        grid = Gtk.Grid(column_spacing=14, row_spacing=4, valign=Gtk.Align.START)
+        head = Gtk.Label(label=heading.upper(), xalign=0)
+        head.add_css_class("qs-help-head")
+        grid.attach(head, 0, 0, 2, 1)
+        for i, (key, desc) in enumerate(rows, start=1):
+            keys = Gtk.Box(spacing=4, halign=Gtk.Align.START)
+            for n, alt in enumerate(key.split("|")):
+                if n:
+                    keys.append(Gtk.Label(label="/", css_classes=["qs-help-or"]))
+                for part in alt.split("+"):
+                    keys.append(Gtk.Label(label=part, css_classes=["qs-keycap"]))
+            label = Gtk.Label(label=desc, xalign=0)
+            label.add_css_class("qs-help-desc")
+            grid.attach(keys, 0, i, 1, 1)
+            grid.attach(label, 1, i, 1, 1)
+        return grid
 
     # ----------------------------------------------------------------- text
     def _build_entry(self) -> Gtk.Box:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        frame.add_css_class("qs-entry-frame")
         self.entry = Gtk.Entry()
-        self.entry.set_placeholder_text("Type, then Enter")
-        self.entry.set_width_chars(22)
+        self.entry.set_width_chars(1)
         self.entry.add_css_class("qs-entry")
-        frame.append(self.entry)
-        hint = Gtk.Label(label="Enter to place  •  Esc to cancel")
-        hint.add_css_class("qs-entry-hint")
-        frame.append(hint)
-        box.append(frame)
+        box.append(self.entry)
+        box.set_halign(Gtk.Align.START)
+        box.set_valign(Gtk.Align.START)
         box.set_visible(False)
         self.entry.connect("changed", self._on_entry_changed)
+        self.entry.connect("notify::cursor-position", lambda *_: self.area.queue_draw())
         self.entry.connect("activate", self._on_entry_commit)
         kc = Gtk.EventControllerKey()
         kc.connect("key-pressed", self._on_entry_key)
@@ -520,20 +542,21 @@ class Editor(Gtk.Window):
         return box
 
     def _begin_text(self, ix: float, iy: float) -> None:
-        sh = Shape(kind=TEXT, x=ix, y=iy, x2=ix, y2=iy, color=self.color,
-                   size=SIZES[self.size_idx], text="")
-        self._entry_pending = sh
+        self._commit_pending_text()
+        self._entry_pending = Shape(kind=TEXT, x=ix, y=iy, x2=ix, y2=iy, color=self.color,
+                                    size=SIZES[self.size_idx], text="")
         lx, ly = self.view.to_logical(ix, iy)
+        self.entry_frame.set_margin_start(int(lx))
+        self.entry_frame.set_margin_top(int(ly))
         self.entry_frame.set_visible(True)
-        w, h = self.area.get_width(), self.area.get_height()
-        w = min(self.entry.get_width() or 260, 340)
-        self.entry_frame.set_halign(Gtk.Align.START)
-        self.entry_frame.set_valign(Gtk.Align.START)
-        self.entry_frame.set_margin_start(int(max(12, min(lx, w - 20))))
-        self.entry_frame.set_margin_top(int(max(12, min(ly, h - 120))))
         self.entry.set_text("")
         self.entry.grab_focus()
         self.last_draw_tool = TEXT
+        self.area.queue_draw()
+
+    def _commit_pending_text(self) -> None:
+        if self._entry_pending is not None:
+            self._on_entry_commit(self.entry)
 
     def _on_entry_changed(self, entry) -> None:
         if self._entry_pending is not None:
@@ -585,11 +608,14 @@ class Editor(Gtk.Window):
         # live layer
         self.view.apply(cr)
         if self._preview is not None:
-            render.draw_shape(cr, self.img, self._preview, self.view)
+            render.draw_shape(cr, self.img, self._preview, self.view, guide=True)
         if self.selected is not None and self._drag is None:
-            render.draw_shape(cr, self.img, self.selected, self.view, selected=True)
-        if self._entry_pending is not None and self._entry_pending.text:
+            render.draw_selection(cr, self.selected, self.view)
+        if self._entry_pending is not None:
+            render.draw_text_editing(cr, self._entry_pending, self.view)
             render.draw_shape(cr, self.img, self._entry_pending, self.view)
+            render.draw_text_caret(cr, self._entry_pending, self.view,
+                                   self.entry.get_position())
         cr.restore()
 
         band = getattr(self, "_band", None)
@@ -656,6 +682,7 @@ class Editor(Gtk.Window):
 
     def _adjust(self, attr: str, idx_attr: str, seq: list, delta: int) -> None:
         setattr(self, idx_attr, max(0, min(len(seq) - 1, getattr(self, idx_attr) + delta)))
+        self.toolbar.set_width(WIDTHS[self.width_idx])
         if self.selected is not None:
             self.doc.mark()
             setattr(self.selected, attr, seq[getattr(self, idx_attr)])
@@ -869,7 +896,7 @@ class Editor(Gtk.Window):
             return True
         # tools
         tools = {
-            Gdk.KEY_p: POINTER, Gdk.KEY_r: RECT, Gdk.KEY_o: ELLIPSE,
+            Gdk.KEY_p: POINTER, Gdk.KEY_m: CURSOR, Gdk.KEY_r: RECT, Gdk.KEY_o: ELLIPSE,
             Gdk.KEY_l: LINE, Gdk.KEY_d: FREEHAND, Gdk.KEY_t: TEXT,
             Gdk.KEY_b: BLUR, Gdk.KEY_n: STEP, Gdk.KEY_v: SELECT,
         }

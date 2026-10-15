@@ -16,9 +16,10 @@ import support  # noqa: E402 (must come first)
 ROOT = support.ROOT
 
 import gi  # noqa: E402
+
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Gdk, GLib  # noqa: E402
 
 from quickshot.service import Quickshot, socket_path  # noqa: E402
 

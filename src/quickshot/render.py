@@ -16,9 +16,9 @@ import gi
 gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Pango, PangoCairo, GdkPixbuf  # noqa: E402
+from gi.repository import GdkPixbuf, Pango, PangoCairo  # noqa: E402
 
-from .model import BLUR, ELLIPSE, FREEHAND, LINE, POINTER, RECT, STEP, TEXT, Shape  # noqa: E402
+from .model import BLUR, CURSOR, ELLIPSE, FREEHAND, LINE, POINTER, RECT, STEP, TEXT, Shape  # noqa: E402
 
 
 def ctx(surface: cairo.ImageSurface) -> cairo.Context:
@@ -253,27 +253,49 @@ def redact(img: cairo.ImageSurface, shape: Shape) -> cairo.ImageSurface:
 # ----------------------------------------------------------------- primitives
 
 
-def _arrow(cr: cairo.Context, s: Shape, u: float) -> None:
-    w = s.width * u
-    x1, y1, x2, y2 = s.x, s.y, s.x2, s.y2
-    ang = math.atan2(y2 - y1, x2 - x1)
-    head = max(w * 3.0, 13.0 * u)
-    bx, by = x2 - head * math.cos(ang), y2 - head * math.sin(ang)
-    cr.set_source_rgba(*s.color)
-    cr.set_line_width(w)
+OUTLINE = 1.4
+OUTLINE_ALPHA = 0.55
+
+
+def _stroke_outlined(cr: cairo.Context, color, width: float, u: float) -> None:
     cr.set_line_cap(cairo.LINE_CAP_ROUND)
-    cr.move_to(x1, y1)
-    cr.line_to(bx, by)
-    cr.stroke()
-    spread = 0.42
-    cr.move_to(x2, y2)
-    cr.line_to(x2 - head * math.cos(ang - spread), y2 - head * math.sin(ang - spread))
-    cr.line_to(x2 - head * math.cos(ang + spread), y2 - head * math.sin(ang + spread))
-    cr.close_path()
-    cr.fill_preserve()
-    cr.set_line_width(w * 0.6)
     cr.set_line_join(cairo.LINE_JOIN_ROUND)
+    cr.set_source_rgba(0, 0, 0, OUTLINE_ALPHA)
+    cr.set_line_width(width + 2 * OUTLINE * u)
+    cr.stroke_preserve()
+    cr.set_source_rgba(*color)
+    cr.set_line_width(width)
     cr.stroke()
+
+
+def _arrow(cr: cairo.Context, s: Shape, u: float) -> None:
+    w = s.width * 1.25 * u
+    dx, dy = s.x2 - s.x, s.y2 - s.y
+    length = math.hypot(dx, dy)
+    if length < 1e-6:
+        return
+    ux, uy = dx / length, dy / length
+    nx, ny = -uy, ux
+    head = min((3.6 * s.width + 8.0) * u, length * 0.7)
+    spread = head * 0.5
+    bx, by = s.x2 - ux * head, s.y2 - uy * head
+    tail = max(w * 0.3, 0.75 * u)
+    cr.new_path()
+    for px, py in ((s.x + nx * tail, s.y + ny * tail),
+                   (bx + nx * w / 2, by + ny * w / 2),
+                   (bx + nx * spread, by + ny * spread),
+                   (s.x2, s.y2),
+                   (bx - nx * spread, by - ny * spread),
+                   (bx - nx * w / 2, by - ny * w / 2),
+                   (s.x - nx * tail, s.y - ny * tail)):
+        cr.line_to(px, py)
+    cr.close_path()
+    cr.set_line_join(cairo.LINE_JOIN_ROUND)
+    cr.set_source_rgba(0, 0, 0, OUTLINE_ALPHA)
+    cr.set_line_width(2 * OUTLINE * u)
+    cr.stroke_preserve()
+    cr.set_source_rgba(*s.color)
+    cr.fill()
 
 
 def _cursor_pointer(cr: cairo.Context, s: Shape, u: float) -> None:
@@ -292,17 +314,22 @@ def _cursor_pointer(cr: cairo.Context, s: Shape, u: float) -> None:
     cr.fill_preserve()
     cr.set_source_rgba(0, 0, 0, 0.85)
     cr.set_line_width(1.6 * u)
+    cr.set_line_join(cairo.LINE_JOIN_ROUND)
     cr.stroke()
+    s.x2, s.y2 = s.x + 0.62 * S, s.y + 0.96 * S
 
 
 def _step(cr: cairo.Context, s: Shape, u: float) -> None:
     cx, cy = (s.x + s.x2) / 2, (s.y + s.y2) / 2
     r = s.size * u
+    cr.set_source_rgba(0, 0, 0, OUTLINE_ALPHA)
+    cr.arc(cx, cy, r + 1.2 * u, 0, 2 * math.pi)
+    cr.fill()
     cr.set_source_rgba(*s.color)
     cr.arc(cx, cy, r, 0, 2 * math.pi)
     cr.fill_preserve()
-    cr.set_source_rgba(1, 1, 1, 0.28)
-    cr.set_line_width(1.5 * u)
+    cr.set_source_rgba(1, 1, 1, 0.9)
+    cr.set_line_width(2 * u)
     cr.stroke()
     cr.save()
     cr.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
@@ -314,21 +341,20 @@ def _step(cr: cairo.Context, s: Shape, u: float) -> None:
     cr.restore()
 
 
+def _text_layout(cr: cairo.Context, text: str, size: float, bold: bool = True):
+    layout = PangoCairo.create_layout(cr)
+    desc = Pango.FontDescription.from_string("Sans Bold" if bold else "Sans")
+    desc.set_absolute_size(size * Pango.SCALE)
+    layout.set_font_description(desc)
+    layout.set_text(text, -1)
+    return layout
+
+
 def _text(cr: cairo.Context, s: Shape, u: float) -> None:
     if not s.text:
         return
-    fs = max(6.0, s.size * u)
-    layout = PangoCairo.create_layout(cr)
-    # `set_absolute_size` is in Pango units and is independent of the DPI
-    # setting, so the glyph size tracks our zoom transform exactly.
-    desc = Pango.FontDescription.from_string("Sans Bold")
-    desc.set_absolute_size(fs * Pango.SCALE)
-    layout.set_font_description(desc)
-    layout.set_text(s.text, -1)
+    layout = _text_layout(cr, s.text, max(6.0, s.size * u))
     pw, ph = layout.get_pixel_size()
-    lw, lh = layout.get_size()  # pango units
-
-    # Halo so text stays readable on any background.
     cr.save()
     cr.set_source_rgba(0, 0, 0, 0.45)
     for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1)):
@@ -342,73 +368,138 @@ def _text(cr: cairo.Context, s: Shape, u: float) -> None:
     s.y2 = s.y + ph
 
 
+def _round_rect(cr: cairo.Context, x: float, y: float, w: float, h: float, r: float) -> None:
+    cr.new_sub_path()
+    cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
+    cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
+    cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
+    cr.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
+    cr.close_path()
+
+
+def draw_text_editing(cr: cairo.Context, s: Shape, view: View) -> None:
+    u = _u(view)
+    size = max(6.0, s.size * u)
+    layout = _text_layout(cr, s.text, size)
+    pw, ph = layout.get_pixel_size()
+    ph = max(ph, int(size * 1.25))
+    pad = 6 * u
+    cr.save()
+    _round_rect(cr, s.x - pad, s.y - pad / 2, max(pw, 24 * u) + 2 * pad, ph + pad, 5 * u)
+    cr.set_source_rgba(0, 0, 0, 0.35)
+    cr.fill_preserve()
+    cr.set_source_rgba(1, 1, 1, 0.55)
+    cr.set_line_width(1.2 * u)
+    cr.set_dash([4 * u, 3 * u], 0)
+    cr.stroke()
+    cr.set_dash([], 0)
+    hint = _text_layout(cr, "Enter to place   Esc to cancel", 11 * u, bold=False)
+    hw, hh = hint.get_pixel_size()
+    hx, hy = s.x - pad, s.y + ph + pad + 4 * u
+    _round_rect(cr, hx, hy, hw + 16 * u, hh + 8 * u, 6 * u)
+    cr.set_source_rgba(0.08, 0.08, 0.1, 0.92)
+    cr.fill()
+    cr.set_source_rgba(1, 1, 1, 0.75)
+    cr.move_to(hx + 8 * u, hy + 4 * u)
+    PangoCairo.show_layout(cr, hint)
+    cr.restore()
+
+
+def draw_text_caret(cr: cairo.Context, s: Shape, view: View, caret: int) -> None:
+    u = _u(view)
+    size = max(6.0, s.size * u)
+    layout = _text_layout(cr, s.text, size)
+    ph = max(layout.get_pixel_size()[1], int(size * 1.25))
+    strong, _weak = layout.get_cursor_pos(len(s.text[:caret].encode("utf-8")))
+    cr.rectangle(s.x + strong.x / Pango.SCALE - 0.5 * u, s.y, 2 * u, ph)
+    cr.set_source_rgba(1, 1, 1, 1)
+    cr.fill()
+
+
 # --------------------------------------------------------------------- shapes
 
 
+def _blur_guide(cr: cairo.Context, img: cairo.ImageSurface, s: Shape, u: float) -> None:
+    bx0, by0, bx1, by1 = clamped_bounds(img, s)
+    cr.rectangle(bx0, by0, bx1 - bx0, by1 - by0)
+    cr.set_source_rgba(0, 0, 0, 0.5)
+    cr.set_line_width(3 * u)
+    cr.stroke_preserve()
+    cr.set_source_rgba(1, 1, 1, 0.9)
+    cr.set_line_width(1.2 * u)
+    cr.set_dash([5 * u, 4 * u], 0)
+    cr.stroke()
+
+
+def _ellipse_path(cr: cairo.Context, s: Shape) -> None:
+    cr.save()
+    cr.translate((s.x + s.x2) / 2, (s.y + s.y2) / 2)
+    cr.scale(max(abs(s.x2 - s.x) / 2, 1e-6), max(abs(s.y2 - s.y) / 2, 1e-6))
+    cr.new_sub_path()
+    cr.arc(0, 0, 1, 0, 2 * math.pi)
+    cr.restore()
+
+
+def draw_selection(cr: cairo.Context, s: Shape, view: View) -> None:
+    u = _u(view)
+    x0, y0, x1, y1 = s.bounds()
+    pad = 5 * u
+    cr.save()
+    cr.rectangle(x0 - pad, y0 - pad, (x1 - x0) + 2 * pad, (y1 - y0) + 2 * pad)
+    cr.set_source_rgba(0, 0, 0, 0.45)
+    cr.set_line_width(3 * u)
+    cr.stroke_preserve()
+    cr.set_source_rgba(1, 1, 1, 0.95)
+    cr.set_line_width(1.2 * u)
+    cr.set_dash([5 * u, 4 * u], 0)
+    cr.stroke()
+    cr.set_dash([], 0)
+    hs = 3.5 * u
+    for hx, hy in ((x0 - pad, y0 - pad), (x1 + pad, y0 - pad),
+                   (x0 - pad, y1 + pad), (x1 + pad, y1 + pad)):
+        cr.rectangle(hx - hs, hy - hs, 2 * hs, 2 * hs)
+        cr.set_source_rgba(1, 1, 1, 1)
+        cr.fill_preserve()
+        cr.set_source_rgba(0.235, 0.427, 0.941, 1)
+        cr.set_line_width(1.6 * u)
+        cr.stroke()
+    cr.restore()
+
+
 def draw_shape(cr: cairo.Context, img: cairo.ImageSurface, s: Shape, view: View,
-               selected: bool = False) -> None:
+               selected: bool = False, guide: bool = False) -> None:
     u = _u(view)
     cr.save()
     if s.kind == BLUR:
-        bx0, by0, bx1, by1 = clamped_bounds(img, s)
-        patch = redact(img, s)
-        cr.set_source_surface(patch, bx0, by0)
+        bx0, by0, _bx1, _by1 = clamped_bounds(img, s)
+        cr.set_source_surface(redact(img, s), bx0, by0)
         cr.paint()
-        cr.set_source_rgba(1, 1, 1, 0.22)
-        cr.set_line_width(1.2 * u)
-        cr.rectangle(bx0, by0, bx1 - bx0, by1 - by0)
-        cr.stroke()
-        cr.restore()
-        return
-
-    if s.kind == FREEHAND:
-        cr.set_source_rgba(*s.color)
-        cr.set_line_width(s.width * u)
-        cr.set_line_cap(cairo.LINE_CAP_ROUND)
-        cr.set_line_join(cairo.LINE_JOIN_ROUND)
+        if guide:
+            _blur_guide(cr, img, s, u)
+    elif s.kind == FREEHAND:
         _smoothed(cr, s.points)
-        cr.stroke()
+        _stroke_outlined(cr, s.color, s.width * u, u)
     elif s.kind == POINTER:
         if math.hypot(s.x2 - s.x, s.y2 - s.y) < 6 * u:
             _cursor_pointer(cr, s, u)
         else:
             _arrow(cr, s, u)
+    elif s.kind == CURSOR:
+        _cursor_pointer(cr, s, u)
     elif s.kind == STEP:
         _step(cr, s, u)
     elif s.kind == TEXT:
         _text(cr, s, u)
-    else:
-        cr.set_source_rgba(*s.color)
-        cr.set_line_width(s.width * u)
-        cr.set_line_cap(cairo.LINE_CAP_ROUND)
-        if s.kind == RECT:
-            cr.rectangle(s.x, s.y, s.x2 - s.x, s.y2 - s.y)
-            cr.stroke()
-        elif s.kind == ELLIPSE:
-            cr.save()
-            cr.translate((s.x + s.x2) / 2, (s.y + s.y2) / 2)
-            cr.scale(max(abs(s.x2 - s.x) / 2, 1e-6), max(abs(s.y2 - s.y) / 2, 1e-6))
-            cr.arc(0, 0, 1, 0, 2 * math.pi)
-            cr.restore()
-            cr.stroke()
-        elif s.kind == LINE:
-            cr.move_to(s.x, s.y)
-            cr.line_to(s.x2, s.y2)
-            cr.stroke()
-
-    if selected:
-        x0, y0, x1, y1 = s.bounds()
-        pad = 4 * u
-        cr.set_source_rgba(0.235, 0.651, 0.969, 0.95)
-        cr.set_line_width(1.4 * u)
-        cr.set_dash([5 * u, 4 * u], 0)
-        cr.rectangle(x0 - pad, y0 - pad, (x1 - x0) + 2 * pad, (y1 - y0) + 2 * pad)
-        cr.stroke()
-        cr.set_dash([], 0)
-        hs = 4 * u
-        for hx, hy in ((x0 - pad, y0 - pad), (x1 + pad, y0 - pad),
-                       (x0 - pad, y1 + pad), (x1 + pad, y1 + pad)):
-            cr.set_source_rgba(1, 1, 1, 1)
-            cr.rectangle(hx - hs, hy - hs, 2 * hs, 2 * hs)
-            cr.fill()
+    elif s.kind == RECT:
+        cr.rectangle(s.x, s.y, s.x2 - s.x, s.y2 - s.y)
+        _stroke_outlined(cr, s.color, s.width * u, u)
+    elif s.kind == ELLIPSE:
+        _ellipse_path(cr, s)
+        _stroke_outlined(cr, s.color, s.width * u, u)
+    elif s.kind == LINE:
+        cr.move_to(s.x, s.y)
+        cr.line_to(s.x2, s.y2)
+        _stroke_outlined(cr, s.color, s.width * u, u)
     cr.restore()
+    if selected:
+        draw_selection(cr, s, view)

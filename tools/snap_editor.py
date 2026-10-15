@@ -22,17 +22,17 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Graphene", "1.0")
 from gi.repository import GLib, Graphene, Gtk  # noqa: E402
 
-from quickshot.model import BLUR, ELLIPSE, PALETTE, POINTER, RECT, STEP, TEXT, Shape  # noqa: E402
+from quickshot.model import BLUR, CURSOR, ELLIPSE, LINE, PALETTE, POINTER, RECT, STEP, TEXT, Shape  # noqa: E402
 from quickshot.service import Quickshot  # noqa: E402
 
 
 def annotate(ed) -> None:
     w, h = ed.img.get_width(), ed.img.get_height()
     shapes = [
-        Shape(kind=POINTER, x=w * 0.15, y=h * 0.2, x2=w * 0.42, y2=h * 0.45, color=PALETTE[0], width=3.5),
-        Shape(kind=RECT, x=w * 0.5, y=h * 0.15, x2=w * 0.85, y2=h * 0.4, color=PALETTE[1], width=3.5),
-        Shape(kind=ELLIPSE, x=w * 0.1, y=h * 0.6, x2=w * 0.3, y2=h * 0.85, color=PALETTE[2], width=3.5),
-        Shape(kind=BLUR, x=w * 0.55, y=h * 0.6, x2=w * 0.8, y2=h * 0.8, color=PALETTE[0], width=3.5),
+        Shape(kind=POINTER, x=w * 0.15, y=h * 0.2, x2=w * 0.42, y2=h * 0.45, color=PALETTE[0]),
+        Shape(kind=RECT, x=w * 0.5, y=h * 0.15, x2=w * 0.85, y2=h * 0.4, color=PALETTE[1]),
+        Shape(kind=ELLIPSE, x=w * 0.1, y=h * 0.6, x2=w * 0.3, y2=h * 0.85, color=PALETTE[2]),
+        Shape(kind=BLUR, x=w * 0.55, y=h * 0.6, x2=w * 0.8, y2=h * 0.8, color=PALETTE[0]),
         Shape(kind=STEP, x=w * 0.45, y=h * 0.7, x2=w * 0.45, y2=h * 0.7, color=PALETTE[0], size=26, step=1),
         Shape(kind=TEXT, x=w * 0.5, y=h * 0.45, x2=w * 0.5, y2=h * 0.45, color=PALETTE[0], size=26, text="Look here"),
     ]
@@ -41,11 +41,29 @@ def annotate(ed) -> None:
     ed._invalidate()
 
 
+def selected(ed) -> None:
+    annotate(ed)
+    ed.selected = ed.doc.shapes[1]
+    ed._invalidate()
+
+
+def redact(ed) -> None:
+    w, h = ed.img.get_width(), ed.img.get_height()
+    ed.doc.add(Shape(kind=BLUR, x=w * 0.2, y=h * 0.3, x2=w * 0.6, y2=h * 0.6, block=12))
+    ed.doc.add(Shape(kind=CURSOR, x=w * 0.7, y=h * 0.3, x2=w * 0.7, y2=h * 0.3, size=20))
+    ed.doc.add(Shape(kind=LINE, x=w * 0.1, y=h * 0.8, x2=w * 0.5, y2=h * 0.85, color=PALETTE[3]))
+    ed._invalidate()
+
+
 SCENARIOS = {
+    "selected": selected,
+    "redact": redact,
     "plain": lambda ed: None,
     "annotated": annotate,
     "help": lambda ed: ed.toggle_help(),
     "text": lambda ed: (ed.set_tool(TEXT), ed._begin_text(ed.img.get_width() * 0.3, ed.img.get_height() * 0.3)),
+    "typed": lambda ed: (ed.set_tool(TEXT), ed._begin_text(ed.img.get_width() * 0.3, ed.img.get_height() * 0.3),
+                         ed.entry.set_text("Fix this button")),
 }
 
 

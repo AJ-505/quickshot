@@ -11,11 +11,25 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "src"))
 
 import cairo  # noqa: E402
+
 from quickshot import render
-from quickshot.render import ctx  # noqa: E402
-from quickshot.model import (BLUR, ELLIPSE, FREEHAND, LINE, PALETTE, POINTER,  # noqa: E402
-                             RECT, STEP, TEXT, Doc, Shape)
-from quickshot.render import View  # noqa: E402
+from quickshot.model import (  # noqa: E402
+    BLUR,
+    ELLIPSE,
+    FREEHAND,
+    LINE,
+    PALETTE,
+    POINTER,
+    RECT,
+    STEP,
+    TEXT,
+    Doc,
+    Shape,
+)
+from quickshot.render import (
+    View,  # noqa: E402
+    ctx,  # noqa: E402
+)
 
 W, H = 1200, 700
 
@@ -65,7 +79,6 @@ c.show_text("password: hunter2correcthorse")
 c.set_source_rgb(0.20, 0.21, 0.25)
 c.rectangle(640, 170, 520, 260)
 c.fill()
-import math
 pts = [(660, 400), (740, 350), (820, 372), (900, 280), (980, 310), (1060, 225)]
 c.set_source_rgb(0.30, 0.60, 0.95)
 c.set_line_width(3)

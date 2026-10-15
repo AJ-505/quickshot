@@ -10,10 +10,10 @@ import sys
 import tempfile
 import traceback
 
-import support  # noqa: F401, E402 (must come first)
-
 import cairo  # noqa: E402
 import gi  # noqa: E402
+import support  # noqa: F401, E402 (must come first)
+
 gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gtk  # noqa: E402
 

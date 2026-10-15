@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 import cairo
 import numpy as np
+
 from quickshot.model import BLUR, Shape
 from quickshot.render import ctx, redact
 

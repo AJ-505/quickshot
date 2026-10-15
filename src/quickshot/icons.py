@@ -20,7 +20,8 @@ _SF = ('xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
        'viewBox="0 0 24 24" fill="currentColor"')
 
 ICONS: dict[str, str] = {
-    "pointer": (
+    "pointer": f'<svg {_S}><path d="M5 19 18 6"/><path d="M9 5.5h9.5V15"/></svg>',
+    "cursor": (
         f'<svg {_SF}>'
         '<path d="M5 3.2 18.6 12.1a.55.55 0 0 1-.2 1l-5.3.9a.5.5 0 0 0-.35.4l-.85 5.3a.55.55 0 0 1-1 .2Z"/>'
         "</svg>"
@@ -36,17 +37,16 @@ ICONS: dict[str, str] = {
         f'<svg {_S}><path d="M5 6.5V5h14v1.5M12 5v14M9 19h6"/></svg>'
     ),
     "blur": (
-        f'<svg {_S}>'
-        '<rect x="3.5" y="3.5" width="17" height="17" rx="2"/>'
-        '<path d="M8.5 8.5h2v2h-2zM13.5 8.5h2v2h-2zM8.5 13.5h2v2h-2zM13.5 13.5h2v2h-2z"/>'
-        "</svg>"
+        f'<svg {_S}><rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/>'
+        '<path d="M8 8h4v4H8zM12 12h4v4h-4z" fill="currentColor" stroke-width="1"/></svg>'
     ),
     "step": (
-        f'<svg {_S}><circle cx="12" cy="12" r="8"/></svg>'
+        f'<svg {_S}><circle cx="12" cy="12" r="8.5"/>'
+        '<path d="M10.2 9.8 12.6 8.4V16" stroke-width="2.1"/></svg>'
     ),
     "select": (
-        f'<svg {_S}><path d="M6 3.5 18 12l-5 .8-.8 5.2Z" stroke-width="1.6"/>'
-        '<path d="M6 3.5V20" stroke-dasharray="2 2.5" stroke-width="1.3"/></svg>'
+        f'<svg {_S}><path d="M12 3v18M3 12h18"/>'
+        '<path d="M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/></svg>'
     ),
     "undo": (
         f'<svg {_S}><path d="M4 9h9.5a5.5 5.5 0 0 1 0 11H8"/><path d="M7.5 5 4 9l3.5 4"/></svg>'

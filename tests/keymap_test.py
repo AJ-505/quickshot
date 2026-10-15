@@ -15,12 +15,24 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 
 import cairo  # noqa: E402
 import gi  # noqa: E402
+
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Gdk, GLib  # noqa: E402
 
-from quickshot.model import (BLUR, ELLIPSE, FREEHAND, LINE, PALETTE, POINTER,  # noqa: E402
-                             RECT, SELECT, STEP, TEXT, Shape)
+from quickshot.model import (  # noqa: E402
+    BLUR,
+    ELLIPSE,
+    FREEHAND,
+    LINE,
+    PALETTE,
+    POINTER,
+    RECT,
+    SELECT,
+    STEP,
+    TEXT,
+    Shape,
+)
 from quickshot.render import ctx  # noqa: E402
 from quickshot.service import Quickshot  # noqa: E402
 
