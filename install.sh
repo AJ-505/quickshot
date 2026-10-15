@@ -34,16 +34,20 @@ python3 - <<'PY' || missing+=("python3-cairo")
 import cairo  # noqa: F401
 PY
 gsettings --version >/dev/null 2>&1 || missing+=("gsettings")
+command -v wl-copy >/dev/null 2>&1 || missing+=("wl-clipboard")
 
 if [ ${#missing[@]} -ne 0 ]; then
   echo "Missing dependencies:"
   for m in "${missing[@]}"; do say "- $m"; done
   echo
   echo "On Ubuntu/Debian:"
-  echo "  sudo apt install python3-gi gir1.2-gtk-4.0 python3-cairo python3-numpy"
+  echo "  sudo apt install python3-gi gir1.2-gtk-4.0 python3-cairo wl-clipboard xdg-desktop-portal-gnome"
   exit 1
 fi
 say "dependencies ok"
+if [ "${XDG_SESSION_TYPE:-}" != "wayland" ] || [[ "${XDG_CURRENT_DESKTOP:-}" != *GNOME* ]]; then
+  say "WARNING: Quickshot is built for GNOME on Wayland; this session is ${XDG_CURRENT_DESKTOP:-unknown}/${XDG_SESSION_TYPE:-unknown}"
+fi
 
 # --- files ------------------------------------------------------------------
 mkdir -p "$PREFIX/src/quickshot" "$BINDIR" "$UNITDIR"

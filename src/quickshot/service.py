@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import socket
 import sys
+import time
 
 import gi
 
@@ -207,11 +208,14 @@ class Quickshot:
     def _on_captured(self, path: str) -> None:
         if self.editor is None:
             return
+        answered = time.monotonic()
         try:
             self.editor.load(path)
         except Exception as exc:
             self.editor.discard_file(path)
             self.notify_error(f"could not open the capture: {exc}")
+            return
+        self._log(f"editor shown {(time.monotonic() - answered) * 1000:.0f} ms after the capture")
 
     def _on_capture_error(self, exc: Exception) -> None:
         if isinstance(exc, CaptureCancelled):
